@@ -110,8 +110,8 @@ Responses arrive on `{device_id}/rsp`.
 
 | Action | Payload |
 |---|---|
-| Light ON | `{"AtoS_l": true}` |
-| Light OFF | `{"AtoS_l": false}` |
+| Light ON | `{"AtoS_l": 1}` |
+| Light OFF | `{"AtoS_l": 0}` |
 | Garage OPEN | `{"AtoS_g": 1}` |
 | Garage CLOSE | `{"AtoS_g": 0}` |
 | Garage STOP | `{"AtoS_g": 2}` |

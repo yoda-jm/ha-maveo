@@ -29,8 +29,8 @@ from .config import Config
 
 class Command:
     # Actions
-    LIGHT_ON      = {"AtoS_l": True}
-    LIGHT_OFF     = {"AtoS_l": False}
+    LIGHT_ON      = {"AtoS_l": 1}
+    LIGHT_OFF     = {"AtoS_l": 0}
     GARAGE_OPEN   = {"AtoS_g": 1}
     GARAGE_CLOSE  = {"AtoS_g": 0}
     GARAGE_STOP   = {"AtoS_g": 2}
@@ -325,11 +325,11 @@ class MaveoIoTClient:
         await self._ws.send(_mqtt_publish_packet(self._cmd_topic, payload))
 
     async def receive(self, timeout: float = 5.0) -> dict | None:
-        """Wait for an incoming MQTT packet. Returns None on timeout."""
+        """Wait for an incoming MQTT packet. Returns None on timeout or connection close."""
         try:
             data = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
             return _parse_mqtt_packet(data)
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
             return None
 
     async def ping(self) -> bool:
