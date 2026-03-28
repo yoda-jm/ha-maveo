@@ -101,21 +101,55 @@ Returns all guest users associated with a device.
 
 Creates a new guest user.  Returns **HTTP 201** (not 200) on success.
 
+`rights`: `0` = restricted (geofence-enforced in app, min 250 m radius), `1` = admin (no restriction).
+
 ```json
 // request
-{"deviceid": "<device_id>", "command": "add_user", "ttl": 3600}
+{"deviceid": "<device_id>", "command": "add_user", "ttl": 3600, "rights": 0}
 
 // response (HTTP 201)
 {
-  "userid": "<uuid>",
-  "token":  "<64 hex chars>",
-  "rights": "...",
-  "ttl":    "3600"
+  "userid":   "<uuid>",
+  "token":    "<64 hex chars>",
+  "rights":   "0",
+  "ttl":      "<unix timestamp string>",
+  "nametag1": "",
+  "nametag2": "",
+  "nametag3": ""
 }
 ```
 
 The `token` is a 64-character hex string used in all subsequent `/user`
 guest operations.
+
+**Claimed vs unclaimed**: nametag fields are empty when the key is first created.
+They are populated by the **guest's app** the first time the guest imports and
+activates the key.  The owner can detect installation by checking `nametag1 != ""`.
+The app refuses to show the shareable link once the key is claimed.
+
+Typical nametag content (set by the guest app):
+- `nametag1`: device/app name chosen by the guest
+- `nametag2`: OS ("Android" / "iOS")
+- `nametag3`: locale ("fr", "en", etc.)
+
+### edit
+
+Edit mutable fields of an existing guest user.  Returns `"Edit success"`.
+
+```json
+// request — only include fields to change
+{
+  "deviceid": "<device_id>",
+  "command":  "edit",
+  "userid":   "<guest_uuid>",
+  "rights":   1,
+  "nametag1": "Alice's Phone",
+  "nametag2": "Android",
+  "nametag3": "en"
+}
+
+// response: 200 "Edit success"
+```
 
 ### remove_user
 

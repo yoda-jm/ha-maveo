@@ -22,15 +22,24 @@ class DeviceStatus:
     session: str  # UUID used as MQTT topic prefix for IoT commands
 
 
+RIGHTS_RESTRICTED = 0   # geofence-limited (client-side, min 250 m radius)
+RIGHTS_ADMIN      = 1   # unrestricted remote access
+
+
 @dataclass
 class GuestUser:
     user_id: str
     token: str
-    rights: str
-    ttl: str          # seconds as string, or "token expired"
-    nametag1: str = ""
-    nametag2: str = ""
-    nametag3: str = ""
+    rights: str       # "0" = restricted (geofence), "1" = admin (remote)
+    ttl: str          # unix timestamp string, or "token expired"
+    nametag1: str = ""   # set by guest app on first activation (device/app name)
+    nametag2: str = ""   # set by guest app (OS, e.g. "Android" / "iOS")
+    nametag3: str = ""   # set by guest app (locale, e.g. "fr")
+
+    @property
+    def is_claimed(self) -> bool:
+        """True if the key has been imported into a guest app (nametag1 is set)."""
+        return bool(self.nametag1)
 
 
 class APIError(Exception):
@@ -116,15 +125,18 @@ class MaveoClient:
             for u in data
         ]
 
-    def add_guest_user(self, device_id: str, ttl_seconds: int) -> GuestUser:
+    def add_guest_user(self, device_id: str, ttl_seconds: int,
+                       rights: int = RIGHTS_RESTRICTED) -> GuestUser:
         """
         Create a temporary guest user.
-        Returns the new user including their token (needed for IoT guest control).
-        Note: HTTP 201 is expected on success.
+        rights: RIGHTS_RESTRICTED (0, default) or RIGHTS_ADMIN (1).
+        Returns the new user including their token.
+        Note: HTTP 201 on success.
         """
         data = self._post_201(
             self._config.api_admin_url,
-            {"deviceid": device_id, "command": "add_user", "ttl": ttl_seconds},
+            {"deviceid": device_id, "command": "add_user",
+             "ttl": ttl_seconds, "rights": rights},
         )
         return GuestUser(
             user_id=data["userid"],
@@ -135,6 +147,22 @@ class MaveoClient:
             nametag2=data.get("nametag2", ""),
             nametag3=data.get("nametag3", ""),
         )
+
+    def edit_guest_user(self, device_id: str, user_id: str, *,
+                        rights: int | None = None,
+                        nametag1: str | None = None,
+                        nametag2: str | None = None,
+                        nametag3: str | None = None) -> None:
+        """
+        Update mutable fields of a guest user.
+        Only fields that are not None are sent.
+        """
+        payload: dict = {"deviceid": device_id, "command": "edit", "userid": user_id}
+        if rights    is not None: payload["rights"]   = rights
+        if nametag1  is not None: payload["nametag1"] = nametag1
+        if nametag2  is not None: payload["nametag2"] = nametag2
+        if nametag3  is not None: payload["nametag3"] = nametag3
+        self._post(self._config.api_admin_url, payload)
 
     def remove_guest_user(self, device_id: str, user_id: str) -> None:
         """Delete a guest user."""

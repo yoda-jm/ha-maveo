@@ -17,10 +17,11 @@ native library `libmaveo-app_armeabi-v7a.so`, and live traffic analysis.
 
 ### Working
 - Full owner authentication (Cognito → Identity Pool → AWS creds)
-- REST: list devices, device status + session UUID, serial, X.509 certificate
-- REST: guest user create / list / remove
+- REST: list devices, device status + session UUID
+- REST: guest user create (with rights level) / list / edit / remove
 - REST: guest token refresh + Cognito IdToken exchange
 - IoT WebSocket: SigV4 header auth, MQTT CONNECT → CONNACK 0
+- Guest rights levels: restricted (geofence, client-side only) vs admin (remote)
 
 ### Blocked
 - IoT SUBSCRIBE / PUBLISH → WebSocket 1005 (Cognito role policy too restrictive)

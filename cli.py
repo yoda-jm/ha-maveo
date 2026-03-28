@@ -13,7 +13,8 @@ Usage:
     python cli.py devices                      # list devices
     python cli.py status <device_id>           # cloud connectivity + session UUID
     python cli.py guests <device_id>           # list guest users
-    python cli.py add-guest <device_id> <ttl>  # create guest user (ttl in seconds)
+    python cli.py add-guest <device_id> <ttl> [--admin]  # create guest (default: restricted)
+    python cli.py edit-guest <device_id> <user_id> [--admin|--restricted] [--name NAME]
     python cli.py remove-guest <device_id> <user_id>
     python cli.py rename <device_id> <new_name>
     python cli.py --region US devices
@@ -25,7 +26,8 @@ import getpass
 import os
 import sys
 
-from maveo import authenticate, get_config, Command, MaveoClient, MaveoIoTClient, Region
+from maveo import (authenticate, get_config, Command, MaveoClient, MaveoIoTClient,
+                   Region, RIGHTS_ADMIN, RIGHTS_RESTRICTED)
 from maveo.auth import AuthError
 from maveo.client import APIError
 
@@ -150,20 +152,33 @@ def cmd_guests(config, device_id: str):
         return
     print(f"Found {len(users)} guest user(s):")
     for u in users:
+        level = "admin" if u.rights == "1" else "restricted"
         tags = " / ".join(t for t in [u.nametag1, u.nametag2, u.nametag3] if t)
-        print(f"  [{u.user_id}]  rights={u.rights}  ttl={u.ttl}"
+        claimed = "claimed" if u.is_claimed else "unclaimed"
+        print(f"  [{u.user_id}]  {level}  {claimed}  ttl={u.ttl}"
               + (f"  ({tags})" if tags else ""))
 
 
-def cmd_add_guest(config, device_id: str, ttl: int):
+def cmd_add_guest(config, device_id: str, ttl: int, admin: bool):
     auth = _login(config)
     client = MaveoClient(auth, config)
-    u = client.add_guest_user(device_id, ttl)
+    rights = RIGHTS_ADMIN if admin else RIGHTS_RESTRICTED
+    u = client.add_guest_user(device_id, ttl, rights=rights)
     print(f"Guest user created:")
     print(f"  user_id : {u.user_id}")
     print(f"  token   : {u.token}")
-    print(f"  rights  : {u.rights}")
+    print(f"  rights  : {'admin' if u.rights == '1' else 'restricted'}")
     print(f"  ttl     : {u.ttl}")
+
+
+def cmd_edit_guest(config, device_id: str, user_id: str,
+                   rights: int | None, name: str | None):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    client.edit_guest_user(device_id, user_id,
+                           rights=rights,
+                           nametag1=name)
+    print(f"Guest user {user_id} updated.")
 
 
 def cmd_remove_guest(config, device_id: str, user_id: str):
@@ -251,6 +266,16 @@ def main():
     p = sub.add_parser("add-guest",   help="Create a guest user (ttl in seconds)")
     p.add_argument("device_id")
     p.add_argument("ttl", type=int)
+    p.add_argument("--admin", action="store_true",
+                   help="Grant admin rights (default: restricted/geofence)")
+
+    p = sub.add_parser("edit-guest",  help="Edit a guest user (rights or name)")
+    p.add_argument("device_id")
+    p.add_argument("user_id")
+    grp = p.add_mutually_exclusive_group()
+    grp.add_argument("--admin",      action="store_true", help="Set rights to admin")
+    grp.add_argument("--restricted", action="store_true", help="Set rights to restricted")
+    p.add_argument("--name", metavar="NAME", help="Set nametag1")
 
     p = sub.add_parser("remove-guest", help="Remove a guest user")
     p.add_argument("device_id")
@@ -287,7 +312,10 @@ def main():
         elif args.command == "guests":
             cmd_guests(config, args.device_id)
         elif args.command == "add-guest":
-            cmd_add_guest(config, args.device_id, args.ttl)
+            cmd_add_guest(config, args.device_id, args.ttl, args.admin)
+        elif args.command == "edit-guest":
+            rights = RIGHTS_ADMIN if args.admin else (RIGHTS_RESTRICTED if args.restricted else None)
+            cmd_edit_guest(config, args.device_id, args.user_id, rights, args.name)
         elif args.command == "remove-guest":
             cmd_remove_guest(config, args.device_id, args.user_id)
         elif args.command == "control":

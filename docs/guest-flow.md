@@ -5,7 +5,31 @@
 A guest user is a time-limited credential set tied to a specific device.
 The owner creates it; the guest uses a token (64-char hex) to authenticate.
 
-The guest flow has two layers:
+### Rights levels
+
+| `rights` | Level | Enforcement |
+|---|---|---|
+| `0` | Restricted | App-side geofence (min 250 m radius, OS geofence API). **Not server-enforced.** |
+| `1` | Admin | No location restriction, full remote access |
+
+The geofence is implemented entirely in the app (QML `PlatformHelper.addGeofence`).
+Any client that bypasses the app can send commands regardless of the rights value.
+
+### Claimed vs unclaimed keys
+
+- **Unclaimed**: created by owner, `nametag1/2/3` are all empty
+- **Claimed**: guest has imported the key into their app; `nametag1` is set
+- The app detects a claimed key and **does not show the shareable link again**
+- The owner can check claim status by testing `nametag1 != ""`
+
+Nametag values are written by the guest app on first activation:
+- `nametag1`: app/device name (user-visible label)
+- `nametag2`: OS ("Android" / "iOS")
+- `nametag3`: locale ("fr", "en", …)
+
+The owner can also set nametags manually via the `edit` command.
+
+### The guest flow has two layers:
 1. **REST guest operations** — working fully
 2. **IoT access via guest credentials** — partially working (CONNECT ok, SUBSCRIBE fails)
 
