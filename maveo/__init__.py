@@ -1,7 +1,7 @@
 """Maveo Python library — Home Assistant integration foundation."""
 
 from .auth import AuthResult, AuthError, authenticate
-from .client import APIError, Device, DeviceInfo, DeviceStatus, GuestUser, MaveoClient
+from .client import APIError, Device, DeviceStatus, GuestUser, MaveoClient
 from .iot import Command, MaveoIoTClient
 from .config import Config, Region, get_config
 
@@ -13,7 +13,6 @@ __all__ = [
     "Command",
     "Config",
     "Device",
-    "DeviceInfo",
     "DeviceStatus",
     "get_config",
     "GuestUser",

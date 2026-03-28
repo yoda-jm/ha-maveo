@@ -1,6 +1,6 @@
 """Maveo HTTP API client."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import requests
 
@@ -20,13 +20,6 @@ class DeviceStatus:
     device: str   # cloud connectivity state ("CONNECTED" / "DISCONNECTED")
     mobile: str   # mobile app connection state
     session: str  # UUID used as MQTT topic prefix for IoT commands
-
-
-@dataclass
-class DeviceInfo:
-    serial: str
-    certificate: str
-    private_key: str
 
 
 @dataclass
@@ -91,33 +84,6 @@ class MaveoClient:
             device=data.get("device", ""),
             mobile=data.get("mobile", ""),
             session=data.get("session", ""),
-        )
-
-    def get_device_serial(self, device_id: str) -> str:
-        """Return the hardware serial number of a device."""
-        data = self._post(
-            self._config.api_admin_url,
-            {"deviceid": device_id, "command": "get_device_serial"},
-        )
-        return data.get("serial", "")
-
-    def get_device_certificate(self, device_id: str) -> DeviceInfo:
-        """
-        Return the device X.509 certificate, private key, and serial.
-        These are needed for direct MQTT/TLS authentication (alternative to SigV4).
-        """
-        cert_data = self._post(
-            self._config.api_admin_url,
-            {"deviceid": device_id, "command": "get_device_certificate"},
-        )
-        key_data = self._post(
-            self._config.api_admin_url,
-            {"deviceid": device_id, "command": "get_device_private_key"},
-        )
-        return DeviceInfo(
-            serial=cert_data.get("serial", ""),
-            certificate=cert_data.get("certificate", ""),
-            private_key=key_data.get("private_key", ""),
         )
 
     def set_device_name(self, device_id: str, name: str) -> None:

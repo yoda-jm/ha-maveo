@@ -12,8 +12,6 @@ Usage:
     python cli.py login                        # test login
     python cli.py devices                      # list devices
     python cli.py status <device_id>           # cloud connectivity + session UUID
-    python cli.py serial <device_id>           # hardware serial number
-    python cli.py certificate <device_id>      # X.509 cert + private key
     python cli.py guests <device_id>           # list guest users
     python cli.py add-guest <device_id> <ttl>  # create guest user (ttl in seconds)
     python cli.py remove-guest <device_id> <user_id>
@@ -143,22 +141,6 @@ def cmd_status(config, device_id: str):
     print(f"Session : {s.session}")
 
 
-def cmd_serial(config, device_id: str):
-    auth = _login(config)
-    client = MaveoClient(auth, config)
-    serial = client.get_device_serial(device_id)
-    print(f"Serial : {serial}")
-
-
-def cmd_certificate(config, device_id: str):
-    auth = _login(config)
-    client = MaveoClient(auth, config)
-    info = client.get_device_certificate(device_id)
-    print(f"Serial      : {info.serial}")
-    print(f"Certificate :\n{info.certificate}")
-    print(f"Private key :\n{info.private_key}")
-
-
 def cmd_guests(config, device_id: str):
     auth = _login(config)
     client = MaveoClient(auth, config)
@@ -263,12 +245,6 @@ def main():
     p = sub.add_parser("status",      help="Get device cloud status + session UUID")
     p.add_argument("device_id")
 
-    p = sub.add_parser("serial",      help="Get device hardware serial number")
-    p.add_argument("device_id")
-
-    p = sub.add_parser("certificate", help="Get device X.509 certificate and private key")
-    p.add_argument("device_id")
-
     p = sub.add_parser("guests",      help="List guest users for a device")
     p.add_argument("device_id")
 
@@ -308,10 +284,6 @@ def main():
             cmd_devices(config)
         elif args.command == "status":
             cmd_status(config, args.device_id)
-        elif args.command == "serial":
-            cmd_serial(config, args.device_id)
-        elif args.command == "certificate":
-            cmd_certificate(config, args.device_id)
         elif args.command == "guests":
             cmd_guests(config, args.device_id)
         elif args.command == "add-guest":
