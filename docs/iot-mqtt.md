@@ -4,10 +4,11 @@
 
 | Step | Status | Notes |
 |---|---|---|
-| WebSocket upgrade (SigV4) | **working** | CONNACK 0 received |
+| WebSocket upgrade (SigV4) | **working** | |
 | MQTT CONNECT | **working** | client_id = device_id required |
-| MQTT SUBSCRIBE | **failing** | WebSocket closes 1005 immediately |
-| MQTT PUBLISH | **untested** | blocked by subscribe failure |
+| MQTT SUBSCRIBE | **working** | topic = `{device_id}/rsp` |
+| MQTT PUBLISH | **working** | topic = `{device_id}/cmd` |
+| All read commands | **working** | see command table below |
 
 ---
 
@@ -51,9 +52,6 @@ host;x-amz-date;x-amz-security-token
 <sha256 of empty body>
 ```
 
-The signing key derivation follows the standard SigV4 chain:
-`HMAC(HMAC(HMAC(HMAC("AWS4"+secret, date), region), "iotdata"), "aws4_request")`
-
 ---
 
 ## MQTT CONNECT packet
@@ -68,31 +66,47 @@ Keep-alive:    60 s
 Client ID:     <device_id>
 ```
 
-The client ID **must** be the device ID string.  AWS IoT policies enforce this
-binding.  Using any other client ID results in a CONNACK with return code ≠ 0
-or an immediate connection drop.
+The client ID **must** be the device ID string (numeric, e.g. `<device_id>`).
+AWS IoT policies enforce this — any other client ID results in an immediate
+connection drop before CONNACK.
 
 CONNACK response (4 bytes: `0x20 0x02 0x00 0x00`):
 - Return code `0x00` = Connection Accepted ✓
+
+**Note:** Connecting with device_id as client_id temporarily displaces the stick's
+own MQTT session (same client_id conflict). The stick reconnects automatically
+within a few seconds. This is the same behaviour as the real app.
 
 ---
 
 ## MQTT topics
 
+**Confirmed via live testing (2026-03-28):**
+
 | Topic | Direction | Purpose |
 |---|---|---|
-| `<session>/cmd` | client → broker → device | Send commands to the device |
-| `<session>/rsp` | device → broker → client | Receive device responses |
+| `{device_id}/cmd` | client → broker → device | Send commands to the device |
+| `{device_id}/rsp` | device → broker → client | Receive device responses |
 
-`<session>` is the UUID from `GET /admin status` (`DeviceStatus.session`).
-It changes each time the device reconnects; always fetch a fresh status before
-connecting.
+The `{device_id}` is the numeric device ID from `list_device`.
+
+**Important:** The session UUID from `GET /admin status` (`DeviceStatus.session`) is
+**NOT** used in MQTT topics. It only indicates whether the device is currently
+online. The previous (incorrect) assumption that session UUID was the topic prefix
+caused all subscribe attempts to fail.
+
+Source: `BlueFiController::sendCommand()` in `libmaveo-app_armeabi-v7a.so` —
+topic template is `"%1/cmd"` where `%1 = this + 0x1c` (the stickId, set from the
+numeric device ID).
 
 ---
 
-## Commands (from decompiled libmaveo-app)
+## Command reference
 
-Commands are JSON payloads published to `<session>/cmd`:
+All commands are JSON payloads published to `{device_id}/cmd`.
+Responses arrive on `{device_id}/rsp`.
+
+### Actions (no response expected)
 
 | Action | Payload |
 |---|---|
@@ -101,24 +115,81 @@ Commands are JSON payloads published to `<session>/cmd`:
 | Garage OPEN | `{"AtoS_g": 1}` |
 | Garage CLOSE | `{"AtoS_g": 0}` |
 | Garage STOP | `{"AtoS_g": 2}` |
-| Request status | `{"AtoS_s": 0}` |
 
-These constants were found by reverse-engineering the Java layer and the native
-library of app version 2.6.0.
+### Read commands (response on rsp topic)
+
+| Command | Payload | Response key | Example value |
+|---|---|---|---|
+| Door status | `{"AtoS_s": 0}` | `StoA_s` | `4` (closed) |
+| Firmware version | `{"AtoS_v": 0}` | `StoA_v` | `"1.2.0"` |
+| Light state | `{"AtoS_l_r": 0}` | `StoA_l_r` | `0` (off) / `1` (on) |
+| Serial number | `{"AtoS_get_serial": 0}` | `StoA_serial` | `"<device_id>"` |
+| Device name | `{"AtoS_name_r": 0}` | `StoA_name_r` | `"<device-name>"` |
+| Time-to-close | `{"AtoS_ttc_r": 0}` | `StoA_ttc_r` | `0` (disabled) |
+| Buzzer state | `{"AtoS_buzzer_r": 0}` | `StoA_buzzer_r` | `"0"` |
+| GPS location | `{"AtoS_gps_req": 0}` | `StoA_gps` + `lat` + `lng` | `{"StoA_gps": 0, "lat": <lat>, "lng": <lng>}` |
+| WiFi info | `{"AtoS_wifi_ap": 0}` | `StoA_wifi_ap` + fields | `{"StoA_wifi_ap": 0, "ssid": "<ssid>", "ip": "<ip>", "mac": "<mac>", "rssi": -73, "error": 0}` |
+
+### Additional commands (found in binary, not yet tested)
+
+| Command | Payload | Notes |
+|---|---|---|
+| Buzzer write | `{"AtoS_buzzer_w": ...}` | Set buzzer enabled/disabled |
+| GPS write | `{"AtoS_gps_write": {...}}` | Set GPS coordinates |
+| Name set | `{"AtoS_name_s": "..."}` | Set device name |
+| TTC write | `{"AtoS_ttc_w": N}` | Set time-to-close minutes |
+| Sensor read | `{"AtoS_sensor": ...}` | → `StoA_sensor` |
+| Ventilation | `{"AtoS_ventilation": ...}` | → `StoA_ventilation`, `StoA_vent_state` |
+| Weather | `{"AtoS_weather": ...}` | → `StoA_weather` |
+| IME learn | `{"AtoS_req_ime_learn": ...}` | → `StoA_ime_learn` |
+| Brake | `{"AtoS_b": ...}` | → `StoA_b` |
+
+### Door status codes (`StoA_s`)
+
+Full `DoorPosition` enum extracted from binary string table (sequential, starts at 0):
+
+| Value | Name | Description |
+|---|---|---|
+| `0` | `DoorPositionUnknown` | Status not yet known |
+| `1` | `DoorPositionOpening` | Door is moving open |
+| `2` | `DoorPositionClosing` | Door is moving closed |
+| `3` | `DoorPositionOpen` | Door is fully open |
+| `4` | `DoorPositionClosed` | Door is fully closed (**confirmed via live test**) |
+| `5` | `DoorPositionIntermediateOpen` | Door stopped in intermediate open position |
+| `6` | `DoorPositionIntermediateClosed` | Door stopped in intermediate closed position |
+
+`4 = Closed` confirmed from live device. Values 1–3, 5–6 derived from binary enum ordering.
 
 ---
 
-## Observed protocol sequence (from PCAP)
+## Live device data (confirmed 2026-03-28)
 
-The real app follows this exact sequence after WebSocket upgrade:
+Responses from a live BlueFi device:
+
+```json
+{"StoA_v":    "1.2.0"}
+{"StoA_s":    4}
+{"StoA_l_r":  0}
+{"StoA_serial": "<device_id>"}
+{"StoA_name_r": "<device-name>"}
+{"StoA_ttc_r":  0}
+{"StoA_buzzer_r": "0"}
+{"StoA_gps": 0, "lat": <lat>, "lng": <lng>}
+{"StoA_wifi_ap": 0, "ssid": "<ssid>", "ip": "<stick-ip>", "mac": "<mac>", "rssi": -73, "error": 0}
+```
+
+---
+
+## Protocol sequence
 
 1. Send MQTT CONNECT (client_id = device_id)
-2. Wait for CONNACK
-3. Send MQTT SUBSCRIBE to `<session>/rsp` (QoS 0, packet_id = 1)
-4. Wait for SUBACK
-5. Send MQTT PUBLISH to `<session>/cmd` with the command JSON
+2. Wait for CONNACK (return_code = 0)
+3. Send MQTT SUBSCRIBE to `{device_id}/rsp` (QoS 0, packet_id = 1)
+4. Wait for SUBACK (granted_qos = [0])
+5. Send MQTT PUBLISH to `{device_id}/cmd` with command JSON
+6. Receive MQTT PUBLISH on `{device_id}/rsp` with response JSON
 
-This sequence is reproduced in `maveo/iot.py` (`MaveoIoTClient`).
+Implemented in `maveo/iot.py` (`MaveoIoTClient`).
 
 ---
 
@@ -129,17 +200,9 @@ Keep-alive interval is 60 s (set in CONNECT).  PINGREQ is two bytes:
 
 ---
 
-## Current blocker — SUBSCRIBE fails
+## Previous investigation dead-end
 
-Despite a successful CONNACK, sending a SUBSCRIBE packet causes the WebSocket
-to close immediately with code **1005** (no status code / no reason).
-
-This happens with:
-- Owner Cognito credentials
-- Guest Cognito credentials obtained via the `get_advuser_access` flow
-
-Both produce the same `identity_id` (`eu-central-1:90fdae04-…`), suggesting
-the Cognito authenticated role's IoT policy only grants `iot:Connect` and
-does **not** grant `iot:Subscribe` or `iot:Publish`.
-
-See [investigations.md](investigations.md) for full details of what was tried.
+Earlier attempts subscribed to `{session_uuid}/rsp` where `session_uuid` came
+from `DeviceStatus.session`. This caused immediate 1005 WebSocket close because
+the AWS IoT policy denies subscriptions to unknown topic filters. The correct
+topic prefix is the **device_id**, not the session UUID.

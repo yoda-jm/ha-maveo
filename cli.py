@@ -11,7 +11,7 @@ Usage:
     python cli.py configure                    # save credentials to OS keychain
     python cli.py login                        # test login
     python cli.py devices                      # list devices
-    python cli.py status <device_id>           # cloud connectivity + session UUID
+    python cli.py status <device_id>           # cloud connectivity (CONNECTED/offline)
     python cli.py guests <device_id>           # list guest users
     python cli.py add-guest <device_id> <ttl> [--admin]  # create guest (default: restricted)
     python cli.py edit-guest <device_id> <user_id> [--admin|--restricted] [--name NAME]
@@ -19,6 +19,10 @@ Usage:
     python cli.py share-guest <device_id> <user_id> <device_name> [--location LOC] [--latitude LAT] [--longitude LON]
     python cli.py decode-link <url>            # decrypt a guest deep link
     python cli.py rename <device_id> <new_name>
+    python cli.py info <device_id>             # query all IoT sensors and display
+    python cli.py firebase-token               # get Firebase Installation auth token
+    python cli.py firebase-rc                  # fetch Firebase Remote Config
+    python cli.py pro-customer                 # MaveoPro profile + devices (api.yourgateway.io)
     python cli.py --region US devices
 """
 
@@ -29,7 +33,9 @@ import os
 import sys
 
 from maveo import (authenticate, get_config, Command, MaveoClient, MaveoIoTClient,
-                   Region, RIGHTS_ADMIN, RIGHTS_RESTRICTED, decode_guest_link)
+                   Region, RIGHTS_ADMIN, RIGHTS_RESTRICTED, decode_guest_link,
+                   get_installation_token, fetch_remote_config, FirebaseError,
+                   MaveoProClient, MaveoProError, DOOR_POSITION_NAMES)
 from maveo.auth import AuthError
 from maveo.client import APIError
 
@@ -232,20 +238,19 @@ def cmd_control(config, device_id: str, action: str, listen: float):
     auth = _login(config)
     client = MaveoClient(auth, config)
 
-    # Get the session UUID needed for MQTT topic
+    # Check device is online (session UUID is not needed for MQTT topics)
     status = client.get_device_status(device_id)
-    if not status.session:
-        print("Device has no active session (offline?)", file=sys.stderr)
+    if status.device != "CONNECTED":
+        print("Device is offline.", file=sys.stderr)
         sys.exit(1)
-    print(f"Session : {status.session}")
+    print(f"Device  : {status.device}")
     print(f"Sending : {action} → {_ACTIONS[action]}")
 
     async def _run():
-        async with MaveoIoTClient(auth, config, status.session, device_id) as iot:
+        async with MaveoIoTClient(auth, config, device_id) as iot:
             print("WebSocket connected")
-            # Subscribe to response topic first (matches real app PCAP behaviour)
             suback = await iot.subscribe()
-            print(f"Subscribed ({status.session}/rsp): {suback}")
+            print(f"Subscribed ({device_id}/rsp): {suback}")
             await iot.send(_ACTIONS[action])
             print("Command sent. Listening for responses...")
             deadline = asyncio.get_event_loop().time() + listen
@@ -255,6 +260,131 @@ def cmd_control(config, device_id: str, action: str, listen: float):
                     print(f"  << {pkt}")
 
     asyncio.run(_run())
+
+
+def cmd_info(config, device_id: str):
+    """Query all IoT read commands and display results in a human-readable form."""
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+
+    status = client.get_device_status(device_id)
+    if status.device != "CONNECTED":
+        print("Device is offline.", file=sys.stderr)
+        sys.exit(1)
+
+    READ_COMMANDS = [
+        ("Door status",     Command.STATUS),
+        ("Firmware",        Command.VERSION),
+        ("Light",           Command.LIGHT_READ),
+        ("Serial",          Command.SERIAL),
+        ("Device name",     Command.NAME_READ),
+        ("Time-to-close",   Command.TTC_READ),
+        ("Buzzer",          Command.BUZZER_READ),
+        ("GPS",             Command.GPS_READ),
+        ("WiFi",            Command.WIFI_READ),
+    ]
+
+    async def _run():
+        results = {}
+        async with MaveoIoTClient(auth, config, device_id) as iot:
+            await iot.subscribe()
+            for label, cmd in READ_COMMANDS:
+                await iot.send(cmd)
+                pkt = await iot.receive(timeout=3.0)
+                if pkt and "json" in pkt:
+                    results[label] = pkt["json"]
+                else:
+                    results[label] = None
+        return results
+
+    results = asyncio.run(_run())
+
+    print(f"{'Device ID':<20}: {device_id}")
+    print(f"{'Cloud status':<20}: {status.device}")
+    print()
+
+    for label, data in results.items():
+        if data is None:
+            print(f"  {label:<18}: (no response)")
+            continue
+
+        if label == "Door status":
+            val = data.get("StoA_s")
+            name = DOOR_POSITION_NAMES.get(val, f"unknown({val})")
+            print(f"  {label:<18}: {name} (raw={val})")
+        elif label == "Firmware":
+            print(f"  {label:<18}: {data.get('StoA_v', '?')}")
+        elif label == "Light":
+            val = data.get("StoA_l_r")
+            print(f"  {label:<18}: {'on' if val else 'off'}")
+        elif label == "Serial":
+            print(f"  {label:<18}: {data.get('StoA_serial', '?')}")
+        elif label == "Device name":
+            print(f"  {label:<18}: {data.get('StoA_name_r', '?')}")
+        elif label == "Time-to-close":
+            val = data.get("StoA_ttc_r", 0)
+            print(f"  {label:<18}: {'disabled' if val == 0 else f'{val} min'}")
+        elif label == "Buzzer":
+            val = data.get("StoA_buzzer_r")
+            print(f"  {label:<18}: {'on' if val else 'off'}")
+        elif label == "GPS":
+            if data.get("StoA_gps") == 0:
+                print(f"  {label:<18}: lat={data.get('lat')}, lng={data.get('lng')}")
+            else:
+                print(f"  {label:<18}: unavailable")
+        elif label == "WiFi":
+            ssid = data.get("ssid", "?")
+            ip   = data.get("ip", "?")
+            mac  = data.get("mac", "?")
+            rssi = data.get("rssi", "?")
+            print(f"  {label:<18}: ssid={ssid}  ip={ip}  mac={mac}  rssi={rssi} dBm")
+
+
+def cmd_firebase_token():
+    """Obtain a Firebase Installation auth token for the Maveo app project."""
+    try:
+        tok = get_installation_token()
+    except FirebaseError as e:
+        print(f"Firebase error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"fid         : {tok.fid}")
+    print(f"auth_token  : {tok.auth_token}")
+    print(f"expires_in  : {tok.expires_in}")
+    print(f"refresh_tok : {tok.refresh_token}")
+
+
+def cmd_firebase_rc():
+    """Fetch Firebase Remote Config using a freshly obtained installation token."""
+    try:
+        tok = get_installation_token()
+        rc = fetch_remote_config(tok)
+    except FirebaseError as e:
+        print(f"Firebase error: {e}", file=sys.stderr)
+        sys.exit(1)
+    import json
+    print(json.dumps(rc, indent=2))
+
+
+def cmd_pro_customer(config, email: str):
+    auth = _login(config)
+    pro = MaveoProClient(auth, email)
+    c = pro.get_customer()
+    print(f"Name    : {c.full_name}")
+    print(f"Email   : {c.email}")
+    if c.phone:
+        print(f"Phone   : {c.phone}")
+    if c.address_formatted:
+        print(f"Address : {c.address_formatted}")
+    if c.created:
+        print(f"Created : {c.created}")
+    if c.updated:
+        print(f"Updated : {c.updated}")
+    if not c.devices:
+        print("Devices : (none)")
+    else:
+        print(f"Devices : {len(c.devices)}")
+        for d in c.devices:
+            print(f"  [{d.serial_number}]  type={d.device_type}")
 
 
 def cmd_rename(config, device_id: str, name: str):
@@ -283,10 +413,12 @@ def main():
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("configure",   help="Save credentials to the OS keychain")
-    sub.add_parser("logout",      help="Remove credentials from the OS keychain")
-    sub.add_parser("login",       help="Test login and show identity info")
-    sub.add_parser("devices",     help="List all devices")
+    sub.add_parser("configure",    help="Save credentials to the OS keychain")
+    sub.add_parser("logout",       help="Remove credentials from the OS keychain")
+    sub.add_parser("login",        help="Test login and show identity info")
+    sub.add_parser("devices",      help="List all devices")
+    sub.add_parser("firebase-token", help="Get a Firebase Installation auth token (Maveo app project)")
+    sub.add_parser("firebase-rc",  help="Fetch Firebase Remote Config (Maveo app project)")
 
     p = sub.add_parser("status",      help="Get device cloud status + session UUID")
     p.add_argument("device_id")
@@ -323,11 +455,18 @@ def main():
     p = sub.add_parser("decode-link", help="Decode (decrypt) a guest deep link URL")
     p.add_argument("url", help="The deeplink.marantec-cloud.de URL")
 
+    p = sub.add_parser("info",        help="Query all IoT read commands and display device info")
+    p.add_argument("device_id")
+
     p = sub.add_parser("control",     help="Send IoT command to a device")
     p.add_argument("device_id")
     p.add_argument("action", choices=list(_ACTIONS))
     p.add_argument("--listen", type=float, default=5.0,
                    metavar="SECS", help="Seconds to listen for responses (default: 5)")
+
+    p = sub.add_parser("pro-customer", help="Get MaveoPro customer profile + devices")
+    p.add_argument("--email", metavar="EMAIL",
+                   help="Account email (default: uses stored/env credentials)")
 
     p = sub.add_parser("rename",      help="Rename a device")
     p.add_argument("device_id")
@@ -343,6 +482,12 @@ def main():
         return
     if args.command == "decode-link":
         cmd_decode_link(args.url)
+        return
+    if args.command == "firebase-token":
+        cmd_firebase_token()
+        return
+    if args.command == "firebase-rc":
+        cmd_firebase_rc()
         return
 
     config = get_config(Region(args.region))
@@ -366,10 +511,18 @@ def main():
         elif args.command == "share-guest":
             cmd_share_guest(config, args.device_id, args.user_id, args.device_name,
                             args.location, args.latitude, args.longitude)
+        elif args.command == "info":
+            cmd_info(config, args.device_id)
         elif args.command == "control":
             cmd_control(config, args.device_id, args.action, args.listen)
+        elif args.command == "pro-customer":
+            email = args.email or get_credentials()[0]
+            cmd_pro_customer(config, email)
         elif args.command == "rename":
             cmd_rename(config, args.device_id, args.name)
+    except MaveoProError as e:
+        print(f"MaveoPro error: {e}", file=sys.stderr)
+        sys.exit(1)
     except AuthError as e:
         print(f"Auth error: {e}", file=sys.stderr)
         sys.exit(1)

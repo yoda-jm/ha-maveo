@@ -2,8 +2,13 @@
 Maveo IoT WebSocket client.
 
 Communicates with AWS IoT Core over MQTT-over-WebSocket using SigV4 auth.
-The session UUID (from MaveoClient.get_device_status) is required to build
-the command topic: {session}/cmd
+
+MQTT topic format (confirmed via live testing):
+  {device_id}/cmd  — app → device (publish commands here)
+  {device_id}/rsp  — device → app (subscribe here for responses)
+
+The session UUID from get_device_status() is NOT used in MQTT topics;
+it is only relevant for checking whether the device is online.
 """
 
 import asyncio
@@ -23,12 +28,43 @@ from .config import Config
 # ---------------------------------------------------------------------------
 
 class Command:
+    # Actions
     LIGHT_ON      = {"AtoS_l": True}
     LIGHT_OFF     = {"AtoS_l": False}
     GARAGE_OPEN   = {"AtoS_g": 1}
     GARAGE_CLOSE  = {"AtoS_g": 0}
     GARAGE_STOP   = {"AtoS_g": 2}
-    STATUS        = {"AtoS_s": 0}
+    # Read commands
+    STATUS        = {"AtoS_s": 0}   # → StoA_s: door position int
+    VERSION       = {"AtoS_v": 0}   # → StoA_v: firmware version string (e.g. "1.2.0")
+    LIGHT_READ    = {"AtoS_l_r": 0} # → StoA_l_r: light state (0=off, 1=on)
+    SERIAL        = {"AtoS_get_serial": 0}  # → StoA_serial: serial number string
+    NAME_READ     = {"AtoS_name_r": 0}      # → StoA_name_r: device name string
+    TTC_READ      = {"AtoS_ttc_r": 0}       # → StoA_ttc_r: time-to-close minutes (0=disabled)
+    BUZZER_READ   = {"AtoS_buzzer_r": 0}    # → StoA_buzzer_r: buzzer state string
+    GPS_READ      = {"AtoS_gps_req": 0}     # → StoA_gps: {lat, lng} or 0 if unavailable
+    WIFI_READ     = {"AtoS_wifi_ap": 0}     # → StoA_wifi_ap: {ssid, ip, mac, rssi, error}
+
+
+# Door position enum (DoorPosition) from binary string table, sequential from 0.
+# Value 4 = Closed confirmed via live test.
+DOOR_UNKNOWN              = 0
+DOOR_OPENING              = 1
+DOOR_CLOSING              = 2
+DOOR_OPEN                 = 3
+DOOR_CLOSED               = 4
+DOOR_INTERMEDIATE_OPEN    = 5
+DOOR_INTERMEDIATE_CLOSED  = 6
+
+DOOR_POSITION_NAMES = {
+    DOOR_UNKNOWN:             "Unknown",
+    DOOR_OPENING:             "Opening",
+    DOOR_CLOSING:             "Closing",
+    DOOR_OPEN:                "Open",
+    DOOR_CLOSED:              "Closed",
+    DOOR_INTERMEDIATE_OPEN:   "IntermediateOpen",
+    DOOR_INTERMEDIATE_CLOSED: "IntermediateClosed",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -200,22 +236,39 @@ class MaveoIoTClient:
     """
     MQTT over WebSocket client for Maveo device control.
 
-    Usage (async):
-        async with MaveoIoTClient(auth, config, session_uuid, device_id) as client:
-            await client.send(Command.LIGHT_ON)
-            await client.send(Command.GARAGE_OPEN)
+    MQTT topic format (confirmed via live PCAP + testing):
+      {device_id}/cmd  — publish commands here
+      {device_id}/rsp  — subscribe here for responses
 
-    session_uuid comes from MaveoClient.get_device_status(device_id).session
-    device_id is required as the MQTT client ID (AWS IoT policy enforces this).
+    The session UUID from get_device_status() is NOT used in topics; it is
+    only useful for checking device online state before connecting.
+
+    Usage (async):
+        async with MaveoIoTClient(auth, config, device_id) as client:
+            await client.send(Command.STATUS)
+            pkt = await client.receive()
+
+    AWS IoT policy requires MQTT client_id == device_id.
+    WARNING: connecting kicks the stick's own MQTT session; it will reconnect
+    automatically (typically within a few seconds).
     """
 
-    def __init__(self, auth: AuthResult, config: Config, device_session: str, device_id: str):
+    def __init__(self, auth: AuthResult, config: Config, device_id: str,
+                 _device_session: str = ""):
+        """
+        Parameters
+        ----------
+        auth          : AuthResult from maveo.auth.authenticate()
+        config        : Config from maveo.config.get_config()
+        device_id     : numeric device ID string from list_devices()
+        _device_session: deprecated, ignored — kept for backwards compatibility
+        """
         self._auth      = auth
         self._config    = config
-        self._session   = device_session
         self._device_id = device_id
         self._ws        = None
-        self._cmd_topic = f"{device_session}/cmd"
+        self._cmd_topic = f"{device_id}/cmd"
+        self._rsp_topic = f"{device_id}/rsp"
 
     # ------------------------------------------------------------------
     # Context manager
@@ -259,10 +312,9 @@ class MaveoIoTClient:
     async def subscribe(self, topic: str | None = None) -> dict:
         """
         Subscribe to a topic and return the SUBACK.
-        Defaults to {session}/rsp — the response topic the real app subscribes
-        to first (observed in PCAP: 66-byte SUBSCRIBE immediately after WS upgrade).
+        Defaults to {device_id}/rsp — the device response topic.
         """
-        topic = topic or f"{self._session}/rsp"
+        topic = topic or self._rsp_topic
         await self._ws.send(_mqtt_subscribe_packet(topic, packet_id=1))
         data = await asyncio.wait_for(self._ws.recv(), timeout=10)
         return _parse_mqtt_packet(data)
