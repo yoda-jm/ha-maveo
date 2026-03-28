@@ -22,6 +22,7 @@ native library `libmaveo-app_armeabi-v7a.so`, and live traffic analysis.
 - REST: guest token refresh + Cognito IdToken exchange
 - IoT WebSocket: SigV4 header auth, MQTT CONNECT → CONNACK 0
 - Guest rights levels: restricted (geofence, client-side only) vs admin (remote)
+- Guest deep link: generate + decode (AES-256-CBC, fixed global key, fully documented)
 
 ### Blocked
 - IoT SUBSCRIBE / PUBLISH → WebSocket 1005 (Cognito role policy too restrictive)

@@ -16,6 +16,8 @@ Usage:
     python cli.py add-guest <device_id> <ttl> [--admin]  # create guest (default: restricted)
     python cli.py edit-guest <device_id> <user_id> [--admin|--restricted] [--name NAME]
     python cli.py remove-guest <device_id> <user_id>
+    python cli.py share-guest <device_id> <user_id> <device_name> [--location LOC] [--latitude LAT] [--longitude LON]
+    python cli.py decode-link <url>            # decrypt a guest deep link
     python cli.py rename <device_id> <new_name>
     python cli.py --region US devices
 """
@@ -27,7 +29,7 @@ import os
 import sys
 
 from maveo import (authenticate, get_config, Command, MaveoClient, MaveoIoTClient,
-                   Region, RIGHTS_ADMIN, RIGHTS_RESTRICTED)
+                   Region, RIGHTS_ADMIN, RIGHTS_RESTRICTED, decode_guest_link)
 from maveo.auth import AuthError
 from maveo.client import APIError
 
@@ -188,6 +190,35 @@ def cmd_remove_guest(config, device_id: str, user_id: str):
     print(f"Guest user {user_id} removed.")
 
 
+def cmd_share_guest(config, device_id: str, user_id: str,
+                    device_name: str, location_name: str,
+                    latitude: float, longitude: float):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    users = client.list_guest_users(device_id)
+    guest = next((u for u in users if u.user_id == user_id), None)
+    if guest is None:
+        print(f"Guest user {user_id} not found.", file=sys.stderr)
+        sys.exit(1)
+    link = client.generate_guest_link(
+        guest, device_id, device_name,
+        location_name=location_name,
+        latitude=latitude,
+        longitude=longitude,
+    )
+    print(link)
+
+
+def cmd_decode_link(url: str):
+    try:
+        payload = decode_guest_link(url)
+    except ValueError as e:
+        print(f"Failed to decode link: {e}", file=sys.stderr)
+        sys.exit(1)
+    for k, v in payload.items():
+        print(f"  {k:15s} : {v}")
+
+
 _ACTIONS = {
     "light-on":     Command.LIGHT_ON,
     "light-off":    Command.LIGHT_OFF,
@@ -281,6 +312,17 @@ def main():
     p.add_argument("device_id")
     p.add_argument("user_id")
 
+    p = sub.add_parser("share-guest", help="Generate a shareable deep link for a guest user")
+    p.add_argument("device_id")
+    p.add_argument("user_id")
+    p.add_argument("device_name",  help="Garage / device display name")
+    p.add_argument("--location",   metavar="NAME",  default="", help="Location name")
+    p.add_argument("--latitude",   type=float,      default=0.0)
+    p.add_argument("--longitude",  type=float,      default=0.0)
+
+    p = sub.add_parser("decode-link", help="Decode (decrypt) a guest deep link URL")
+    p.add_argument("url", help="The deeplink.marantec-cloud.de URL")
+
     p = sub.add_parser("control",     help="Send IoT command to a device")
     p.add_argument("device_id")
     p.add_argument("action", choices=list(_ACTIONS))
@@ -298,6 +340,9 @@ def main():
         return
     if args.command == "logout":
         cmd_logout()
+        return
+    if args.command == "decode-link":
+        cmd_decode_link(args.url)
         return
 
     config = get_config(Region(args.region))
@@ -318,6 +363,9 @@ def main():
             cmd_edit_guest(config, args.device_id, args.user_id, rights, args.name)
         elif args.command == "remove-guest":
             cmd_remove_guest(config, args.device_id, args.user_id)
+        elif args.command == "share-guest":
+            cmd_share_guest(config, args.device_id, args.user_id, args.device_name,
+                            args.location, args.latitude, args.longitude)
         elif args.command == "control":
             cmd_control(config, args.device_id, args.action, args.listen)
         elif args.command == "rename":

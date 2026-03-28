@@ -121,6 +121,95 @@ the owner Cognito role already has.
 
 ---
 
+---
+
+## Guest deep link format
+
+**Status: fully reverse-engineered and implemented.**
+
+### URL structure
+
+```
+https://deeplink.marantec-cloud.de?data=<iv_b64><ct_b64>
+```
+
+- `<iv_b64>` — standard Base64 of a random 16-byte IV (always ends with `==`, so 24 chars)
+- `<ct_b64>` — standard Base64 of the AES-256-CBC ciphertext (PKCS7 padding, no separator)
+
+The two Base64 blocks are concatenated with no separator.  The split point is
+the `==` terminator of the IV block.
+
+### Encryption
+
+| Parameter | Value |
+|---|---|
+| Algorithm | AES-256-CBC / PKCS7 padding |
+| Key | Fixed, app-wide (32 bytes, see below) |
+| IV | Random 16 bytes, prepended as Base64 |
+
+The key is a **hardcoded constant** stored as the QML property `deepLinkKey`
+(UTF-16LE string) in `libmaveo-app_armeabi-v7a.so` at data offset `0x23fc00`:
+
+```
+Base64: zbH/cSqJIcgIta9NEhfJ8GSuT79dTQNDB2AcPBfLxyo=
+Hex:    cdb1ff712a8921c808b5af4d1217c9f064ae4fbf5d4d034307601c3c17cbc72a
+```
+
+This single key is shared by all Maveo installations worldwide.  No PBKDF2
+or per-user derivation is performed.
+
+### Plaintext payload
+
+A URL-encoded query string with exactly 12 parameters (the app validates this):
+
+```
+userid=<guest_uuid>
+&token=<64_hex_chars>
+&rights=<0|1>
+&ttl=<unix_timestamp_milliseconds>
+&garagename=<device_name>
+&garageid=<device_id>
+&nametag1=<empty_on_creation>
+&nametag2=<empty_on_creation>
+&nametag3=<empty_on_creation>
+&locationname=<location_display_name>
+&latitude=<float>
+&longitude=<float>
+```
+
+`ttl` is a Unix timestamp in **milliseconds** (unlike the REST API which uses seconds).
+`nametag1/2/3` are empty when the key is first shared; they are set by the guest app on activation.
+
+### Security note
+
+Because the AES key is the same for every app installation, **any link can be
+decrypted by anyone who has extracted the key from the binary**.  The link
+contains the guest token in plaintext after decryption, so link confidentiality
+depends entirely on keeping the URL itself secret — not on the encryption.
+
+The geofence (`rights=0`) is enforced only by the app, not the server.
+
+### Library usage
+
+```python
+from maveo import decode_guest_link
+payload = decode_guest_link(url)
+
+# Generate a link (requires a valid GuestUser object):
+link = client.generate_guest_link(guest, device_id, "My Garage",
+                                   location_name="Home",
+                                   latitude=48.858, longitude=2.294)
+```
+
+### CLI usage
+
+```
+python cli.py decode-link <url>
+python cli.py share-guest <device_id> <user_id> "My Garage" --location Home --latitude 48.858 --longitude 2.294
+```
+
+---
+
 ## Auxiliary guest call — get_guest_access_info
 
 Non-destructive: checks TTL without consuming the token.

@@ -1,11 +1,22 @@
 """Maveo HTTP API client."""
 
+import base64
+import os
 from dataclasses import dataclass
+from urllib.parse import urlencode, parse_qs, unquote_plus
 
 import requests
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
 from .auth import AuthResult
 from .config import Config
+
+# Fixed AES-256 key embedded in libmaveo-app_armeabi-v7a.so (QML property 'deepLinkKey').
+# Stored as a UTF-16LE string at SO data offset 0x23fc00.
+# All Maveo apps share this key; it is used directly (no PBKDF2).
+_DEEP_LINK_KEY = base64.b64decode("zbH/cSqJIcgIta9NEhfJ8GSuT79dTQNDB2AcPBfLxyo=")
+_DEEP_LINK_BASE_URL = "https://deeplink.marantec-cloud.de"
 
 
 @dataclass
@@ -44,6 +55,51 @@ class GuestUser:
 
 class APIError(Exception):
     pass
+
+
+def decode_guest_link(url: str) -> dict:
+    """
+    Decrypt a Maveo guest deep link and return the payload as a dict.
+
+    Raises ValueError if the URL format is invalid or decryption fails.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    # Extract the raw 'data' value without URL-decoding '+' as space.
+    # Base64 uses '+' literally; parse_qs would wrongly convert it to ' '.
+    raw = None
+    for part in parsed.query.split("&"):
+        if part.startswith("data="):
+            raw = part[5:]
+            break
+    if raw is None:
+        raise ValueError("No 'data' parameter in URL")
+    # Split at the '==' terminator of the 24-char base64 IV block
+    eq_pos = raw.index("==")
+    iv_b64 = raw[:eq_pos + 2]
+    ct_b64 = raw[eq_pos + 2:]
+
+    try:
+        iv = base64.b64decode(iv_b64)
+        ct = base64.b64decode(ct_b64)
+    except Exception as e:
+        raise ValueError(f"Base64 decode failed: {e}") from e
+
+    if len(iv) != 16:
+        raise ValueError(f"Expected 16-byte IV, got {len(iv)}")
+
+    try:
+        cipher = AES.new(_DEEP_LINK_KEY, AES.MODE_CBC, iv)
+        plaintext = unpad(cipher.decrypt(ct), 16).decode()
+    except Exception as e:
+        raise ValueError(f"Decryption failed: {e}") from e
+
+    result = {}
+    for part in plaintext.split("&"):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            result[k] = unquote_plus(v)
+    return result
 
 
 class MaveoClient:
@@ -170,6 +226,63 @@ class MaveoClient:
             self._config.api_admin_url,
             {"deviceid": device_id, "command": "remove_user", "userid": user_id},
         )
+
+    def generate_guest_link(
+        self,
+        guest: "GuestUser",
+        device_id: str,
+        device_name: str,
+        *,
+        location_name: str = "",
+        latitude: float = 0.0,
+        longitude: float = 0.0,
+    ) -> str:
+        """
+        Generate a Maveo deep link for a guest user.
+
+        The link can be shared out-of-band (QR code, SMS, etc.).  Opening it
+        on a phone with the Maveo app installed will import the guest key.
+
+        The TTL field in the URL payload is derived from guest.ttl.  If the
+        TTL is a unix timestamp (digits only), it is converted to milliseconds.
+        If it is "token expired", the current time is used (link will appear
+        expired in the app).
+
+        Encryption: AES-256-CBC with a fixed key embedded in the Maveo app
+        binary.  The 16-byte random IV is base64-encoded and prepended to the
+        base64-encoded ciphertext; the two blocks are concatenated (no
+        separator) as the `data` query parameter.
+
+        Returns the full URL string.
+        """
+        # Derive TTL in milliseconds
+        if guest.ttl.isdigit():
+            ttl_ms = int(guest.ttl) * 1000
+        else:
+            import time
+            ttl_ms = int(time.time() * 1000)
+
+        payload = urlencode({
+            "userid":       guest.user_id,
+            "token":        guest.token,
+            "rights":       guest.rights,
+            "ttl":          ttl_ms,
+            "garagename":   device_name,
+            "garageid":     device_id,
+            "nametag1":     guest.nametag1,
+            "nametag2":     guest.nametag2,
+            "nametag3":     guest.nametag3,
+            "locationname": location_name,
+            "latitude":     latitude,
+            "longitude":    longitude,
+        })
+
+        iv = os.urandom(16)
+        cipher = AES.new(_DEEP_LINK_KEY, AES.MODE_CBC, iv)
+        ct = cipher.encrypt(pad(payload.encode(), 16))
+
+        data_param = base64.b64encode(iv).decode() + base64.b64encode(ct).decode()
+        return f"{_DEEP_LINK_BASE_URL}?data={data_param}"
 
     # ------------------------------------------------------------------
     # Internal
