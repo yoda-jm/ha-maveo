@@ -8,25 +8,31 @@ Credentials are resolved in this order:
   3. Interactive prompt     (fallback)
 
 Usage:
-    python cli.py configure          # save credentials to OS keychain
-    python cli.py login              # test login
-    python cli.py devices            # list devices
-    python cli.py status <device_id>
+    python cli.py configure                    # save credentials to OS keychain
+    python cli.py login                        # test login
+    python cli.py devices                      # list devices
+    python cli.py status <device_id>           # cloud connectivity + session UUID
+    python cli.py serial <device_id>           # hardware serial number
+    python cli.py certificate <device_id>      # X.509 cert + private key
+    python cli.py guests <device_id>           # list guest users
+    python cli.py add-guest <device_id> <ttl>  # create guest user (ttl in seconds)
+    python cli.py remove-guest <device_id> <user_id>
     python cli.py rename <device_id> <new_name>
     python cli.py --region US devices
 """
 
 import argparse
+import asyncio
 import getpass
 import os
 import sys
 
-from maveo import authenticate, get_config, MaveoClient, Region
+from maveo import authenticate, get_config, Command, MaveoClient, MaveoIoTClient, Region
 from maveo.auth import AuthError
 from maveo.client import APIError
 
 KEYRING_SERVICE = "maveo"
-KEYRING_EMAIL_KEY = "_account"  # slot that stores the email itself
+KEYRING_EMAIL_KEY = "_account"
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +40,6 @@ KEYRING_EMAIL_KEY = "_account"  # slot that stores the email itself
 # ---------------------------------------------------------------------------
 
 def _keyring():
-    """Return the keyring module, or None if not installed."""
     try:
         import keyring
         return keyring
@@ -43,10 +48,6 @@ def _keyring():
 
 
 def get_credentials() -> tuple[str, str]:
-    """
-    Resolve email + password using the priority chain:
-      env vars → keyring → interactive prompt
-    """
     email = os.environ.get("MAVEO_EMAIL")
     password = os.environ.get("MAVEO_PASSWORD")
 
@@ -64,7 +65,6 @@ def get_credentials() -> tuple[str, str]:
                 if email and password:
                     return email, password
 
-    # Interactive fallback
     if not email:
         email = input("Email: ").strip()
     if not password:
@@ -76,10 +76,7 @@ def get_credentials() -> tuple[str, str]:
 def save_credentials(email: str, password: str) -> None:
     kr = _keyring()
     if kr is None:
-        print(
-            "keyring is not installed — run:  pip install keyring",
-            file=sys.stderr,
-        )
+        print("keyring is not installed — run:  pip install keyring", file=sys.stderr)
         sys.exit(1)
     kr.set_password(KEYRING_SERVICE, KEYRING_EMAIL_KEY, email)
     kr.set_password(KEYRING_SERVICE, email, password)
@@ -112,18 +109,21 @@ def cmd_logout():
     print("Credentials removed from keychain.")
 
 
-def cmd_login(config):
+def _login(config):
     email, password = get_credentials()
-    print(f"Logging in as {email}...")
+    print(f"Authenticating as {email}...")
     auth = authenticate(email, password, config)
+    return auth
+
+
+def cmd_login(config):
+    auth = _login(config)
     print(f"  identity_id : {auth.identity_id}")
     print(f"  expires     : {auth.expiration}")
 
 
 def cmd_devices(config):
-    email, password = get_credentials()
-    print(f"Authenticating as {email}...")
-    auth = authenticate(email, password, config)
+    auth = _login(config)
     client = MaveoClient(auth, config)
     devices = client.list_devices()
     if not devices:
@@ -135,18 +135,102 @@ def cmd_devices(config):
 
 
 def cmd_status(config, device_id: str):
-    email, password = get_credentials()
-    auth = authenticate(email, password, config)
+    auth = _login(config)
     client = MaveoClient(auth, config)
+    s = client.get_device_status(device_id)
+    print(f"Device  : {s.device}")
+    print(f"Mobile  : {s.mobile}")
+    print(f"Session : {s.session}")
+
+
+def cmd_serial(config, device_id: str):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    serial = client.get_device_serial(device_id)
+    print(f"Serial : {serial}")
+
+
+def cmd_certificate(config, device_id: str):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    info = client.get_device_certificate(device_id)
+    print(f"Serial      : {info.serial}")
+    print(f"Certificate :\n{info.certificate}")
+    print(f"Private key :\n{info.private_key}")
+
+
+def cmd_guests(config, device_id: str):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    users = client.list_guest_users(device_id)
+    if not users:
+        print("No guest users.")
+        return
+    print(f"Found {len(users)} guest user(s):")
+    for u in users:
+        tags = " / ".join(t for t in [u.nametag1, u.nametag2, u.nametag3] if t)
+        print(f"  [{u.user_id}]  rights={u.rights}  ttl={u.ttl}"
+              + (f"  ({tags})" if tags else ""))
+
+
+def cmd_add_guest(config, device_id: str, ttl: int):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    u = client.add_guest_user(device_id, ttl)
+    print(f"Guest user created:")
+    print(f"  user_id : {u.user_id}")
+    print(f"  token   : {u.token}")
+    print(f"  rights  : {u.rights}")
+    print(f"  ttl     : {u.ttl}")
+
+
+def cmd_remove_guest(config, device_id: str, user_id: str):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+    client.remove_guest_user(device_id, user_id)
+    print(f"Guest user {user_id} removed.")
+
+
+_ACTIONS = {
+    "light-on":     Command.LIGHT_ON,
+    "light-off":    Command.LIGHT_OFF,
+    "garage-open":  Command.GARAGE_OPEN,
+    "garage-close": Command.GARAGE_CLOSE,
+    "garage-stop":  Command.GARAGE_STOP,
+    "status":       Command.STATUS,
+}
+
+def cmd_control(config, device_id: str, action: str, listen: float):
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+
+    # Get the session UUID needed for MQTT topic
     status = client.get_device_status(device_id)
-    print(f"Device  : {status.device}")
-    print(f"Mobile  : {status.mobile}")
+    if not status.session:
+        print("Device has no active session (offline?)", file=sys.stderr)
+        sys.exit(1)
     print(f"Session : {status.session}")
+    print(f"Sending : {action} → {_ACTIONS[action]}")
+
+    async def _run():
+        async with MaveoIoTClient(auth, config, status.session, device_id) as iot:
+            print("WebSocket connected")
+            # Subscribe to response topic first (matches real app PCAP behaviour)
+            suback = await iot.subscribe()
+            print(f"Subscribed ({status.session}/rsp): {suback}")
+            await iot.send(_ACTIONS[action])
+            print("Command sent. Listening for responses...")
+            deadline = asyncio.get_event_loop().time() + listen
+            while asyncio.get_event_loop().time() < deadline:
+                pkt = await iot.receive(timeout=1.0)
+                if pkt:
+                    print(f"  << {pkt}")
+
+    asyncio.run(_run())
 
 
 def cmd_rename(config, device_id: str, name: str):
-    email, password = get_credentials()
-    auth = authenticate(email, password, config)
+    auth = _login(config)
     client = MaveoClient(auth, config)
     client.set_device_name(device_id, name)
     print(f"Device {device_id} renamed to '{name}'.")
@@ -171,21 +255,43 @@ def main():
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("configure", help="Save credentials to the OS keychain")
-    sub.add_parser("logout",    help="Remove credentials from the OS keychain")
-    sub.add_parser("login",     help="Test login and show identity info")
-    sub.add_parser("devices",   help="List all devices")
+    sub.add_parser("configure",   help="Save credentials to the OS keychain")
+    sub.add_parser("logout",      help="Remove credentials from the OS keychain")
+    sub.add_parser("login",       help="Test login and show identity info")
+    sub.add_parser("devices",     help="List all devices")
 
-    p_status = sub.add_parser("status", help="Get device status")
-    p_status.add_argument("device_id")
+    p = sub.add_parser("status",      help="Get device cloud status + session UUID")
+    p.add_argument("device_id")
 
-    p_rename = sub.add_parser("rename", help="Rename a device")
-    p_rename.add_argument("device_id")
-    p_rename.add_argument("name")
+    p = sub.add_parser("serial",      help="Get device hardware serial number")
+    p.add_argument("device_id")
+
+    p = sub.add_parser("certificate", help="Get device X.509 certificate and private key")
+    p.add_argument("device_id")
+
+    p = sub.add_parser("guests",      help="List guest users for a device")
+    p.add_argument("device_id")
+
+    p = sub.add_parser("add-guest",   help="Create a guest user (ttl in seconds)")
+    p.add_argument("device_id")
+    p.add_argument("ttl", type=int)
+
+    p = sub.add_parser("remove-guest", help="Remove a guest user")
+    p.add_argument("device_id")
+    p.add_argument("user_id")
+
+    p = sub.add_parser("control",     help="Send IoT command to a device")
+    p.add_argument("device_id")
+    p.add_argument("action", choices=list(_ACTIONS))
+    p.add_argument("--listen", type=float, default=5.0,
+                   metavar="SECS", help="Seconds to listen for responses (default: 5)")
+
+    p = sub.add_parser("rename",      help="Rename a device")
+    p.add_argument("device_id")
+    p.add_argument("name")
 
     args = parser.parse_args()
 
-    # configure / logout don't need a region or network call
     if args.command == "configure":
         cmd_configure()
         return
@@ -202,6 +308,18 @@ def main():
             cmd_devices(config)
         elif args.command == "status":
             cmd_status(config, args.device_id)
+        elif args.command == "serial":
+            cmd_serial(config, args.device_id)
+        elif args.command == "certificate":
+            cmd_certificate(config, args.device_id)
+        elif args.command == "guests":
+            cmd_guests(config, args.device_id)
+        elif args.command == "add-guest":
+            cmd_add_guest(config, args.device_id, args.ttl)
+        elif args.command == "remove-guest":
+            cmd_remove_guest(config, args.device_id, args.user_id)
+        elif args.command == "control":
+            cmd_control(config, args.device_id, args.action, args.listen)
         elif args.command == "rename":
             cmd_rename(config, args.device_id, args.name)
     except AuthError as e:
