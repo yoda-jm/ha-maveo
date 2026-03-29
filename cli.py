@@ -16,7 +16,7 @@ Usage:
     python cli.py add-guest <device_id> <ttl> [--admin]  # create guest (default: restricted)
     python cli.py edit-guest <device_id> <user_id> [--admin|--restricted] [--name NAME]
     python cli.py remove-guest <device_id> <user_id>
-    python cli.py share-guest <device_id> <user_id> <device_name> [--location LOC] [--latitude LAT] [--longitude LON]
+    python cli.py share-guest <device_id> <user_id> [--name NAME] [--location LOC] [--latitude LAT] [--longitude LON]
     python cli.py decode-link <url>            # decrypt a guest deep link
     python cli.py rename <device_id> <new_name>
     python cli.py info <device_id>             # query all IoT sensors and display
@@ -196,9 +196,34 @@ def cmd_remove_guest(config, device_id: str, user_id: str):
     print(f"Guest user {user_id} removed.")
 
 
+def _fetch_device_info(auth, config, device_id: str, need_gps: bool, need_name: bool) -> dict:
+    """Fetch device name and/or GPS from the stick via MQTT."""
+    result = {}
+
+    async def _run():
+        async with MaveoIoTClient(auth, config, device_id) as iot:
+            await iot.subscribe()
+            if need_name:
+                await iot.send(Command.NAME_READ)
+                pkt = await iot.receive(timeout=3.0)
+                if pkt and "json" in pkt:
+                    result["name"] = pkt["json"].get("StoA_name_r", "")
+            if need_gps:
+                await iot.send(Command.GPS_READ)
+                pkt = await iot.receive(timeout=3.0)
+                if pkt and "json" in pkt:
+                    d = pkt["json"]
+                    if d.get("StoA_gps") == 0:
+                        result["lat"] = d.get("lat", 0.0)
+                        result["lng"] = d.get("lng", 0.0)
+
+    asyncio.run(_run())
+    return result
+
+
 def cmd_share_guest(config, device_id: str, user_id: str,
-                    device_name: str, location_name: str,
-                    latitude: float, longitude: float):
+                    device_name: str | None, location_name: str | None,
+                    latitude: float | None, longitude: float | None):
     auth = _login(config)
     client = MaveoClient(auth, config)
     users = client.list_guest_users(device_id)
@@ -206,6 +231,22 @@ def cmd_share_guest(config, device_id: str, user_id: str,
     if guest is None:
         print(f"Guest user {user_id} not found.", file=sys.stderr)
         sys.exit(1)
+
+    need_name = device_name is None
+    need_gps  = latitude is None or longitude is None
+
+    if need_name or need_gps:
+        print("Fetching device data from stick via MQTT...")
+        info = _fetch_device_info(auth, config, device_id, need_gps=need_gps, need_name=need_name)
+        if need_name:
+            device_name = info.get("name") or device_id
+        if need_gps:
+            latitude  = info.get("lat", 0.0)
+            longitude = info.get("lng", 0.0)
+
+    if location_name is None:
+        location_name = device_name
+
     link = client.generate_guest_link(
         guest, device_id, device_name,
         location_name=location_name,
@@ -447,10 +488,14 @@ def main():
     p = sub.add_parser("share-guest", help="Generate a shareable deep link for a guest user")
     p.add_argument("device_id")
     p.add_argument("user_id")
-    p.add_argument("device_name",  help="Garage / device display name")
-    p.add_argument("--location",   metavar="NAME",  default="", help="Location name")
-    p.add_argument("--latitude",   type=float,      default=0.0)
-    p.add_argument("--longitude",  type=float,      default=0.0)
+    p.add_argument("--name",      metavar="NAME",  default=None,
+                   help="Garage display name (default: fetched from device)")
+    p.add_argument("--location",  metavar="NAME",  default=None,
+                   help="Location name (default: same as --name)")
+    p.add_argument("--latitude",  type=float,      default=None,
+                   help="GPS latitude (default: fetched from device)")
+    p.add_argument("--longitude", type=float,      default=None,
+                   help="GPS longitude (default: fetched from device)")
 
     p = sub.add_parser("decode-link", help="Decode (decrypt) a guest deep link URL")
     p.add_argument("url", help="The deeplink.marantec-cloud.de URL")
@@ -509,7 +554,7 @@ def main():
         elif args.command == "remove-guest":
             cmd_remove_guest(config, args.device_id, args.user_id)
         elif args.command == "share-guest":
-            cmd_share_guest(config, args.device_id, args.user_id, args.device_name,
+            cmd_share_guest(config, args.device_id, args.user_id, args.name,
                             args.location, args.latitude, args.longitude)
         elif args.command == "info":
             cmd_info(config, args.device_id)

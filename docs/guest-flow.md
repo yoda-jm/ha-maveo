@@ -204,7 +204,9 @@ link = client.generate_guest_link(guest, device_id, "My Garage",
 
 ```
 python cli.py decode-link <url>
-python cli.py share-guest <device_id> <user_id> "My Garage" --location Home --latitude 48.858 --longitude 2.294
+python cli.py share-guest <device_id> <user_id>                     # all values auto-fetched from device
+python cli.py share-guest <device_id> <user_id> --name "My Garage"  # override name, GPS still auto
+python cli.py share-guest <device_id> <user_id> --name "My Garage" --location Home --latitude 48.858 --longitude 2.294
 ```
 
 ---

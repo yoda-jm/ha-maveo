@@ -211,7 +211,9 @@ POST /admin
 → HTTP 201  {"userid": "<uuid>", "token": "<64 hex>", "rights": "0", "ttl": "..."}
 
 # Share — generate encrypted deep link
-python cli.py share-guest <device_id> <user_id> "Garage" --latitude X --longitude Y
+python cli.py share-guest <device_id> <user_id>                          # name + GPS fetched from device
+python cli.py share-guest <device_id> <user_id> --name "My Garage"      # override name, GPS still auto
+python cli.py share-guest <device_id> <user_id> --name G --latitude X --longitude Y  # fully manual
 → https://deeplink.marantec-cloud.de?data=<encrypted>
 
 # Revoke
