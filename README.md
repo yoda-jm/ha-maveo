@@ -1,127 +1,109 @@
-# ha-maveo
+# Maveo — Home Assistant Integration
 
-Python library for the [Marantec Maveo](https://www.marantec.com/) smart garage door system, intended as the foundation for a Home Assistant integration.
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue)](https://www.home-assistant.io/)
+[![IoT Class](https://img.shields.io/badge/IoT%20class-Cloud%20Polling-yellow)](https://developers.home-assistant.io/docs/creating_integration_manifest#iot-class)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## Quick start
+Control your **Marantec Maveo** garage door stick from Home Assistant.
+
+> **Cloud integration** — requires an active internet connection and a Maveo account.
+> All commands and state updates go through the Marantec cloud (AWS IoT + Cognito).
+> The integration cannot operate offline or if the Marantec cloud is unreachable.
+
+---
+
+## Features
+
+| Entity | Description |
+|--------|-------------|
+| **Cover** — Garage door | Open, close, stop; live position (open / closed / opening / closing) |
+| **Light** — Garage light | Turn on/off, live state |
+| **Binary sensor** — Connectivity | Cloud connection status |
+| **Sensor** — Firmware | Stick firmware version |
+| **Sensor** — Time-to-close | Auto-close timer in minutes |
+| **Sensor** — WiFi signal | RSSI in dBm + SSID attribute |
+| **Sensor** — Buzzer | Buzzer state |
+| **Device tracker** — Location | GPS coordinates shown on the HA map |
+| **Sensor** — Guest key ×N | One per guest: TTL countdown, rights, claimed status, app name |
+| **Camera** — Guest QR ×N | Scannable QR code per guest — point the Maveo app at it on mobile |
+
+Guest entities are created and removed automatically as guest keys are added or revoked.
+
+---
+
+## Installation via HACS
+
+1. In HACS → **Integrations** → three-dot menu → **Custom repositories**
+2. Add `https://github.com/yoda-jm/ha-maveo` — category **Integration**
+3. Install **Maveo** and restart Home Assistant
+4. **Settings → Integrations → Add** → search **Maveo**
+5. Enter your Maveo email, password, and region (EU / US)
+
+> After install, add the following topics to the GitHub repo so it appears in HACS searches:
+> `hacs`, `home-assistant`, `home-assistant-integration`, `maveo`, `garage-door`, `marantec`
+
+---
+
+## Services
+
+### `maveo.create_guest`
+
+Creates a time-limited guest key for a device. A persistent notification appears with
+the share link, and the guest QR camera entity updates automatically.
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `device_id` | ✓ | — | Numeric device ID (from sensor attributes) |
+| `ttl_hours` | — | 24 | Validity in hours (1–720) |
+| `admin` | — | false | Full remote access without geofence restriction |
+
+### `maveo.remove_guest`
+
+Revokes a guest key immediately.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `device_id` | ✓ | Numeric device ID |
+| `user_id` | ✓ | Guest UUID (shown in the guest sensor's attributes) |
+
+---
+
+## Update frequency
+
+| Data | Interval |
+|------|----------|
+| Device state (door, light, WiFi…) | 30 s — MQTT burst-poll |
+| Guest key list | 60 s — REST |
+| After any user command | Immediate refresh (2 s delay) |
+
+---
+
+## Protocol
+
+- **Authentication**: AWS Cognito USER_PASSWORD_AUTH → Identity Pool → temp AWS credentials
+- **Device control**: MQTT 3.1.1 over WebSocket (SigV4 header auth) to AWS IoT Core
+- **Management**: Marantec REST API (`/admin`, `/user` endpoints)
+
+Full protocol documentation is in [`docs/`](docs/), including reverse-engineering notes.
+
+---
+
+## Development / CLI
 
 ```bash
-git clone <this-repo> ha-maveo && cd ha-maveo
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+git clone https://github.com/yoda-jm/ha-maveo && cd ha-maveo
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python cli.py configure            # save credentials to OS keychain once
-python cli.py devices              # list your devices
+python cli.py configure          # save credentials to OS keychain
+python cli.py devices            # list devices
+python cli.py info <device_id>   # query all IoT sensors
+python cli.py share-guest <device_id> <user_id>  # generate guest QR link
 ```
 
-## Structure
+---
 
-```
-ha-maveo/
-├── maveo/
-│   ├── __init__.py      # public API
-│   ├── config.py        # EU / US region constants
-│   ├── auth.py          # Cognito login → AuthResult
-│   └── client.py        # MaveoClient — device listing & status
-├── cli.py               # command-line tool for development / testing
-└── requirements.txt
-```
+## Disclaimer
 
-## How it works
-
-Authentication is a two-step AWS Cognito flow:
-
-1. **`initiate_auth`** (USER_PASSWORD_AUTH) against the Maveo Cognito User Pool → `id_token`, `access_token`, `refresh_token`
-2. **`get_id` + `get_credentials_for_identity`** against the Cognito Identity Pool → `identity_id` (used as the device owner key) + temporary AWS credentials (for future IoT/WebSocket use)
-
-All HTTP API calls use the `id_token` as a `Bearer` token.
-
-## Requirements
-
-- Python 3.11+
-- Dependencies: `boto3`, `requests`, `keyring`
-
-## Credentials
-
-The CLI resolves credentials in this order — the first source that provides both email and password wins:
-
-| Priority | Source | How |
-|----------|--------|-----|
-| 1 | Environment variables | `MAVEO_EMAIL` + `MAVEO_PASSWORD` |
-| 2 | OS keychain | after running `python cli.py configure` |
-| 3 | Interactive prompt | fallback, asks at runtime |
-
-The OS keychain backend is provided by [`keyring`](https://github.com/jaraco/keyring) and uses whatever the system offers: macOS Keychain, GNOME Keyring, KWallet, Windows Credential Store.
-
-## CLI
-
-```bash
-# First-time setup — saves to OS keychain
-python cli.py configure
-
-# Test login — shows identity_id and token expiry
-python cli.py login
-
-# List all devices owned by the account
-python cli.py devices
-
-# Get the current status of a specific device
-python cli.py status <device_id>
-
-# Rename a device
-python cli.py rename <device_id> "New Name"
-
-# Use the US region instead of EU (default)
-python cli.py --region US devices
-
-# Remove credentials from keychain
-python cli.py logout
-
-# CI / scripts — skip keychain entirely
-MAVEO_EMAIL=user@example.com MAVEO_PASSWORD=secret python cli.py devices
-```
-
-Example output:
-
-```
-$ python cli.py devices
-Authenticating as user@example.com...
-Found 1 device(s):
-  [<device_id>]  My Garage  (type=0)
-
-$ python cli.py status <device_id>
-Device  : CONNECTED
-Mobile  : disconnected
-Session : xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-## Library usage
-
-```python
-from maveo import authenticate, get_config, MaveoClient, Region
-
-config = get_config(Region.EU)
-auth = authenticate("user@example.com", "password", config)
-
-client = MaveoClient(auth, config)
-
-devices = client.list_devices()
-for d in devices:
-    print(d.id, d.name, d.device_type)
-
-status = client.get_device_status(devices[0].id)
-print(status.device)   # "CONNECTED"
-print(status.session)  # UUID used for IoT commands
-```
-
-## Region support
-
-| Region | AWS region    | Status        |
-|--------|---------------|---------------|
-| EU     | eu-central-1  | Tested, works |
-| US     | us-west-2     | Config present, untested |
-
-## What's next
-
-- [ ] IoT / WebSocket control (open/close garage, toggle light) using the `session` UUID returned by `get_device_status`
-- [ ] Token refresh (avoid re-authenticating on every call)
-- [ ] Home Assistant `ConfigEntry` + `Entity` wrappers
+This integration is reverse-engineered from the Maveo Android app and is not affiliated
+with or endorsed by Marantec. Use at your own risk.

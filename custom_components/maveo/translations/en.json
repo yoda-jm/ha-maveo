@@ -1,0 +1,79 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Maveo",
+        "description": "This integration communicates with the Maveo cloud (Marantec). An internet connection and a Maveo account are required at all times.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "region": "Region"
+        },
+        "data_description": {
+          "region": "EU for Europe, US for North America"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot connect to Maveo cloud"
+    },
+    "abort": {
+      "already_configured": "This account is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "firmware": {"name": "Firmware"},
+      "ttc": {"name": "Time to close"},
+      "rssi": {"name": "WiFi signal"},
+      "buzzer": {"name": "Buzzer"}
+    },
+    "binary_sensor": {
+      "connectivity": {"name": "Cloud connectivity"}
+    },
+    "cover": {
+      "garage_door": {"name": "Garage door"}
+    },
+    "light": {
+      "garage_light": {"name": "Light"}
+    },
+    "device_tracker": {
+      "location": {"name": "Location"}
+    }
+  },
+  "services": {
+    "create_guest": {
+      "name": "Create guest key",
+      "description": "Create a time-limited guest key for a device and display its QR code.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "Numeric device ID from the devices list."
+        },
+        "ttl_hours": {
+          "name": "Validity (hours)",
+          "description": "How long the guest key is valid."
+        },
+        "admin": {
+          "name": "Admin access",
+          "description": "If true, the guest has full remote access (no geofence)."
+        }
+      }
+    },
+    "remove_guest": {
+      "name": "Remove guest key",
+      "description": "Revoke a guest key from a device.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "Numeric device ID."
+        },
+        "user_id": {
+          "name": "Guest user ID",
+          "description": "UUID of the guest user to remove."
+        }
+      }
+    }
+  }
+}
