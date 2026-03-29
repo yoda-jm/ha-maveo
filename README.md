@@ -4,6 +4,9 @@
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue)](https://www.home-assistant.io/)
 [![IoT Class](https://img.shields.io/badge/IoT%20class-Cloud%20Polling-yellow)](https://developers.home-assistant.io/docs/creating_integration_manifest#iot-class)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![hassfest](https://github.com/yoda-jm/ha-maveo/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/yoda-jm/ha-maveo/actions/workflows/hassfest.yaml)
+[![HACS validation](https://github.com/yoda-jm/ha-maveo/actions/workflows/hacs.yaml/badge.svg)](https://github.com/yoda-jm/ha-maveo/actions/workflows/hacs.yaml)
+[![Ruff](https://github.com/yoda-jm/ha-maveo/actions/workflows/lint.yaml/badge.svg)](https://github.com/yoda-jm/ha-maveo/actions/workflows/lint.yaml)
 
 Control your **Marantec Maveo** garage door stick from Home Assistant.
 
