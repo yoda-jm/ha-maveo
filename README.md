@@ -43,9 +43,6 @@ Guest entities are created and removed automatically as guest keys are added or 
 4. **Settings → Integrations → Add** → search **Maveo**
 5. Enter your Maveo email, password, and region (EU / US)
 
-> After install, add the following topics to the GitHub repo so it appears in HACS searches:
-> `hacs`, `home-assistant`, `home-assistant-integration`, `maveo`, `garage-door`, `marantec`
-
 ---
 
 ## Services
