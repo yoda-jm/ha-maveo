@@ -47,8 +47,7 @@ All requests are `POST /admin` with a JSON body containing at minimum
 
 ### status
 
-Returns current cloud connectivity state and the MQTT session UUID needed for
-IoT commands.
+Returns current cloud connectivity state.
 
 ```json
 // request
@@ -62,9 +61,9 @@ IoT commands.
 }
 ```
 
-The `session` UUID is the MQTT topic prefix: commands go to `<session>/cmd`,
-responses arrive on `<session>/rsp`.  It changes each time the device
-reconnects to the cloud.
+`device: CONNECTED` means the stick has an active MQTT session with the broker.
+The `session` UUID is **not** used in MQTT topics — it only indicates online state.
+MQTT topics use the numeric `device_id` as prefix (see iot-mqtt.md).
 
 ### set_device_name
 

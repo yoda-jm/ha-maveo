@@ -31,7 +31,7 @@ The owner can also set nametags manually via the `edit` command.
 
 ### The guest flow has two layers:
 1. **REST guest operations** — working fully
-2. **IoT access via guest credentials** — partially working (CONNECT ok, SUBSCRIBE fails)
+2. **IoT access via guest credentials** — fully working (guest tokens resolve to owner identity, so IoT access is the same as owner)
 
 ---
 
@@ -113,11 +113,10 @@ are resolved back to the owner's Cognito identity on the server side.
 
 ## IoT result with guest credentials
 
-- MQTT CONNECT with `device_id` as client_id → **CONNACK 0** (success)
-- MQTT SUBSCRIBE to `<session>/rsp` → **WebSocket close 1005** (same as owner)
-
-The guest IoT auth path does not unlock additional IoT permissions beyond what
-the owner Cognito role already has.
+Guest tokens resolve to the same `identity_id` as the owner on the server side, so
+the resulting AWS credentials are identical.  IoT access works the same way as owner
+access (see iot-mqtt.md): connect with `client_id = device_id`, subscribe to
+`{device_id}/rsp`, publish to `{device_id}/cmd`.
 
 ---
 
