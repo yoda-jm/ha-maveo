@@ -1,8 +1,11 @@
 {
   "domain": "maveo",
   "name": "Maveo",
-  "version": "0.1.0",
+  "codeowners": ["@yoda-jm"],
+  "config_flow": true,
   "documentation": "https://github.com/yoda-jm/ha-maveo",
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/yoda-jm/ha-maveo/issues",
   "requirements": [
     "pycryptodome>=3.19.1",
@@ -10,8 +13,5 @@
     "boto3>=1.34.0",
     "qrcode[pil]>=7.4.2"
   ],
-  "codeowners": ["@yoda-jm"],
-  "iot_class": "cloud_polling",
-  "config_flow": true,
-  "integration_type": "device"
+  "version": "0.1.0"
 }

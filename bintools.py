@@ -289,7 +289,7 @@ def cmd_symbol(binary_path, name):
                 ["nm", flag, "--defined-only", binary_path],
                 stderr=subprocess.DEVNULL,
             ).decode()
-            hits = [l for l in out.splitlines() if name in l]
+            hits = [line for line in out.splitlines() if name in line]
             if hits:
                 label = "dynamic" if flag == "-D" else "all"
                 print(f"--- {label} symbols matching {name!r} ---")
@@ -305,7 +305,7 @@ def cmd_symbol(binary_path, name):
             ["readelf", "-Ws", "--wide", binary_path],
             stderr=subprocess.DEVNULL,
         ).decode()
-        hits = [l for l in out.splitlines() if name in l]
+        hits = [line for line in out.splitlines() if name in line]
         if hits:
             print(f"--- readelf symbols matching {name!r} ---")
             for h in hits[:50]:
@@ -324,7 +324,7 @@ def cmd_ghidra_strings(ghidra_c, pattern, context=3):
     with open(ghidra_c, "r", errors="replace") as f:
         lines = f.readlines()
 
-    hits = [(i, l.rstrip()) for i, l in enumerate(lines) if pat.search(l)]
+    hits = [(i, line.rstrip()) for i, line in enumerate(lines) if pat.search(line)]
     if not hits:
         print(f"No lines matching {pattern!r} in {ghidra_c}")
         return

@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .auth import authenticate, AuthError
 from .client import MaveoClient, APIError
 from .config import Region, get_config
-from .const import DOMAIN, PLATFORMS, SERVICE_CREATE_GUEST, SERVICE_REMOVE_GUEST
+from .const import DOMAIN, PLATFORMS
 from .coordinator import MaveoDeviceCoordinator
 from .guest_coordinator import MaveoGuestCoordinator
 from .services import async_register_services

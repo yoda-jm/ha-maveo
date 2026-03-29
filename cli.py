@@ -172,7 +172,7 @@ def cmd_add_guest(config, device_id: str, ttl: int, admin: bool):
     client = MaveoClient(auth, config)
     rights = RIGHTS_ADMIN if admin else RIGHTS_RESTRICTED
     u = client.add_guest_user(device_id, ttl, rights=rights)
-    print(f"Guest user created:")
+    print("Guest user created:")
     print(f"  user_id : {u.user_id}")
     print(f"  token   : {u.token}")
     print(f"  rights  : {'admin' if u.rights == '1' else 'restricted'}")

@@ -3,7 +3,7 @@
 import base64
 import os
 from dataclasses import dataclass
-from urllib.parse import urlencode, parse_qs, unquote_plus
+from urllib.parse import urlencode, unquote_plus
 
 import requests
 from Crypto.Cipher import AES
@@ -214,10 +214,14 @@ class MaveoClient:
         Only fields that are not None are sent.
         """
         payload: dict = {"deviceid": device_id, "command": "edit", "userid": user_id}
-        if rights    is not None: payload["rights"]   = rights
-        if nametag1  is not None: payload["nametag1"] = nametag1
-        if nametag2  is not None: payload["nametag2"] = nametag2
-        if nametag3  is not None: payload["nametag3"] = nametag3
+        if rights is not None:
+            payload["rights"] = rights
+        if nametag1 is not None:
+            payload["nametag1"] = nametag1
+        if nametag2 is not None:
+            payload["nametag2"] = nametag2
+        if nametag3 is not None:
+            payload["nametag3"] = nametag3
         self._post(self._config.api_admin_url, payload)
 
     def remove_guest_user(self, device_id: str, user_id: str) -> None:
