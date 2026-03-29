@@ -41,6 +41,8 @@ _EMPTY: dict[str, Any] = {
     "gps_lat":     None,
     "gps_lng":     None,
     "wifi_ssid":   None,
+    "wifi_ip":     None,
+    "wifi_mac":    None,
     "wifi_rssi":   None,
 }
 
@@ -133,6 +135,8 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         updates["gps_lng"] = d.get("lng")
                 elif key == "wifi":
                     updates["wifi_ssid"] = d.get("ssid")
+                    updates["wifi_ip"]   = d.get("ip")
+                    updates["wifi_mac"]  = d.get("mac")
                     updates["wifi_rssi"] = d.get("rssi")
                 elif key == "light_on":
                     val = d.get(response_key)

@@ -4,7 +4,7 @@ from .auth import AuthResult, AuthError, authenticate
 from .client import (APIError, Device, DeviceStatus, GuestUser, MaveoClient,
                       RIGHTS_ADMIN, RIGHTS_RESTRICTED, decode_guest_link)
 from .iot import (Command, MaveoIoTClient,
-                   DOOR_UNKNOWN, DOOR_OPENING, DOOR_CLOSING, DOOR_OPEN,
+                   DOOR_STOPPED, DOOR_OPENING, DOOR_CLOSING, DOOR_OPEN,
                    DOOR_CLOSED, DOOR_INTERMEDIATE_OPEN, DOOR_INTERMEDIATE_CLOSED,
                    DOOR_POSITION_NAMES)
 from .config import Config, Region, get_config
@@ -17,7 +17,7 @@ __all__ = [
     "AuthResult",
     "APIError",
     "Command",
-    "DOOR_UNKNOWN",
+    "DOOR_STOPPED",
     "DOOR_OPENING",
     "DOOR_CLOSING",
     "DOOR_OPEN",

@@ -150,15 +150,17 @@ Full `DoorPosition` enum extracted from binary string table (sequential, starts 
 
 | Value | Name | Description |
 |---|---|---|
-| `0` | `DoorPositionUnknown` | Status not yet known |
-| `1` | `DoorPositionOpening` | Door is moving open |
-| `2` | `DoorPositionClosing` | Door is moving closed |
-| `3` | `DoorPositionOpen` | Door is fully open |
-| `4` | `DoorPositionClosed` | Door is fully closed (**confirmed via live test**) |
-| `5` | `DoorPositionIntermediateOpen` | Door stopped in intermediate open position |
-| `6` | `DoorPositionIntermediateClosed` | Door stopped in intermediate closed position |
+| `0` | `DoorPositionStopped` | Stopped mid-course (**confirmed live**) |
+| `1` | `DoorPositionOpening` | Door is moving open (**confirmed live**) |
+| `2` | `DoorPositionClosing` | Door is moving closed (**confirmed live**) |
+| `3` | `DoorPositionOpen` | Door is fully open (**confirmed live**) |
+| `4` | `DoorPositionClosed` | Door is fully closed (**confirmed live**) |
+| `5` | `DoorPositionIntermediateOpen` | Unknown — from binary enum, never observed |
+| `6` | `DoorPositionIntermediateClosed` | Unknown — from binary enum, never observed |
 
-`4 = Closed` confirmed from live device. Values 1–3, 5–6 derived from binary enum ordering.
+The original binary enum name for `0` is `DoorPositionUnknown` but live testing
+confirms it is sent when the door is stopped mid-travel. Values 5 and 6 exist in the
+binary string table but have not been observed in practice — their exact meaning is unknown.
 
 ---
 

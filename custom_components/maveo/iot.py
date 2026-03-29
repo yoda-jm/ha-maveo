@@ -48,16 +48,16 @@ class Command:
 
 # Door position enum (DoorPosition) from binary string table, sequential from 0.
 # Value 4 = Closed confirmed via live test.
-DOOR_UNKNOWN              = 0
+DOOR_STOPPED              = 0   # stopped mid-course (any direction)
 DOOR_OPENING              = 1
 DOOR_CLOSING              = 2
 DOOR_OPEN                 = 3
 DOOR_CLOSED               = 4
-DOOR_INTERMEDIATE_OPEN    = 5
-DOOR_INTERMEDIATE_CLOSED  = 6
+DOOR_INTERMEDIATE_OPEN    = 5   # stopped at a partially-open position
+DOOR_INTERMEDIATE_CLOSED  = 6   # stopped close to the closed position
 
 DOOR_POSITION_NAMES = {
-    DOOR_UNKNOWN:             "Unknown",
+    DOOR_STOPPED:             "Stopped",
     DOOR_OPENING:             "Opening",
     DOOR_CLOSING:             "Closing",
     DOOR_OPEN:                "Open",

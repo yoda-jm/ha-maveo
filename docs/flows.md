@@ -169,13 +169,13 @@ Door position codes (`StoA_s`):
 
 | Value | Meaning |
 |---|---|
-| 0 | Unknown |
-| 1 | Opening |
-| 2 | Closing |
-| 3 | Open |
+| 0 | Stopped *(mid-course, any direction — confirmed live)* |
+| 1 | Opening *(confirmed live)* |
+| 2 | Closing *(confirmed live)* |
+| 3 | Open *(confirmed live)* |
 | 4 | Closed *(confirmed live)* |
-| 5 | IntermediateOpen |
-| 6 | IntermediateClosed |
+| 5 | IntermediateOpen *(from binary, not observed in practice)* |
+| 6 | IntermediateClosed *(from binary, not observed in practice)* |
 
 CLI shortcut: `python cli.py info <device_id>` — fetches all read commands and
 displays them formatted.

@@ -160,7 +160,15 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         if self.entity_description.key == "rssi":
-            return {"ssid": (self.coordinator.data or {}).get("wifi_ssid")}
+            data = self.coordinator.data or {}
+            attrs: dict[str, Any] = {}
+            if data.get("wifi_ssid") is not None:
+                attrs["ssid"] = data["wifi_ssid"]
+            if data.get("wifi_ip") is not None:
+                attrs["ip"] = data["wifi_ip"]
+            if data.get("wifi_mac") is not None:
+                attrs["mac"] = data["wifi_mac"]
+            return attrs
         return {}
 
 
