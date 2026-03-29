@@ -1,16 +1,10 @@
 create_guest:
-  name: Create guest key
-  description: Create a time-limited guest key for a Maveo device.
   fields:
     device_id:
-      name: Device ID
-      description: Numeric device ID (from the Maveo devices list).
       required: true
       selector:
         text:
     ttl_hours:
-      name: Validity (hours)
-      description: How long the key is valid (1–720 hours).
       required: false
       default: 24
       selector:
@@ -19,26 +13,18 @@ create_guest:
           max: 720
           unit_of_measurement: h
     admin:
-      name: Admin access
-      description: Grant full remote access (no geofence). Default is restricted.
       required: false
       default: false
       selector:
         boolean:
 
 remove_guest:
-  name: Remove guest key
-  description: Revoke a guest key from a Maveo device.
   fields:
     device_id:
-      name: Device ID
-      description: Numeric device ID.
       required: true
       selector:
         text:
     user_id:
-      name: Guest user ID
-      description: UUID of the guest to remove.
       required: true
       selector:
         text:
