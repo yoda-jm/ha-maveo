@@ -1,7 +1,7 @@
 """Maveo garage light entity."""
 from __future__ import annotations
 
-from homeassistant.components.light import LightEntity
+from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -28,6 +28,8 @@ class MaveoGarageLight(CoordinatorEntity[MaveoDeviceCoordinator], LightEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "garage_light"
     _attr_icon = "mdi:lightbulb"
+    _attr_color_mode = ColorMode.ONOFF
+    _attr_supported_color_modes = {ColorMode.ONOFF}
 
     def __init__(self, coordinator: MaveoDeviceCoordinator, device) -> None:
         super().__init__(coordinator)
