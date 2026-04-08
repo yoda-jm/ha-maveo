@@ -29,13 +29,16 @@ from .config import Config
 
 class Command:
     # Actions
-    LIGHT_ON      = {"AtoS_l": 1}
-    LIGHT_OFF     = {"AtoS_l": 0}
-    GARAGE_OPEN   = {"AtoS_g": 1}
-    GARAGE_CLOSE  = {"AtoS_g": 0}
-    GARAGE_STOP   = {"AtoS_g": 2}
+    LIGHT_ON          = {"AtoS_l": 1}
+    LIGHT_OFF         = {"AtoS_l": 0}
+    GARAGE_OPEN       = {"AtoS_g": 1}   # confirmed live: opens door
+    GARAGE_CLOSE      = {"AtoS_g": 2}   # confirmed live: closes door
+    GARAGE_STOP       = {"AtoS_g": 0}   # confirmed live: stops door mid-travel
+    GARAGE_VENTILATE  = {"AtoS_g": 3}   # ventilation position (which intermediate position is used: conflicting docs)
     # Read commands
     STATUS        = {"AtoS_s": 0}   # → StoA_s: door position int
+                                     #   NOTE: also triggers a full state dump (see docs/iot-mqtt.md):
+                                     #   weather, ventilation, sensor, GPS, WiFi, ime_learn — StoA_s arrives last
     VERSION       = {"AtoS_v": 0}   # → StoA_v: firmware version string (e.g. "1.2.0")
     LIGHT_READ    = {"AtoS_l_r": 0} # → StoA_l_r: light state (0=off, 1=on)
     SERIAL        = {"AtoS_get_serial": 0}  # → StoA_serial: serial number string
@@ -44,6 +47,16 @@ class Command:
     BUZZER_READ   = {"AtoS_buzzer_r": 0}    # → StoA_buzzer_r: buzzer state string
     GPS_READ      = {"AtoS_gps_req": 0}     # → StoA_gps: {lat, lng} or 0 if unavailable
     WIFI_READ     = {"AtoS_wifi_ap": 0}     # → StoA_wifi_ap: {ssid, ip, mac, rssi, error}
+    # Commands found in binary / confirmed in STATUS dump (payload value TBC)
+    SENSOR_PRESENCE  = {"AtoS_sensor": 0, "command": 0}  # → StoA_sensor: {error} — error:2=no sensor, error:0=paired
+    SENSOR_READINGS  = {"AtoS_sensor": 0, "command": 7}  # → StoA_sensor: {temperature_val, humidity_val, battery_val, last_update}
+                                                          #   units: temperature_val 0.01°C, humidity_val 0.01% (unconfirmed — no live sensor)
+                                                          #   produces two responses: data packet + {"state":9} (discard)
+    SENSOR_METADATA  = {"AtoS_sensor": 0, "command": 6}  # → StoA_sensor: {name, manufacturer, model, serial_num, fw/sw/hw_rev}
+    SENSOR_FULL      = {"AtoS_sensor": 0, "command": 8}  # → StoA_sensor: readings + metadata combined (commands 6+7)
+    VENTILATION_READ = {"AtoS_ventilation": 0}  # → StoA_ventilation: runtime state + config
+    WEATHER_READ  = {"AtoS_weather": 0}     # → StoA_weather: {humidity (0.01%), temperature (0.01°C), last_update}
+    IME_LEARN_READ = {"AtoS_req_ime_learn": 0}  # → StoA_ime_learn: {open, close} (1=learned)
 
 
 # Door position enum (DoorPosition) from binary string table, sequential from 0.
@@ -53,8 +66,8 @@ DOOR_OPENING              = 1
 DOOR_CLOSING              = 2
 DOOR_OPEN                 = 3
 DOOR_CLOSED               = 4
-DOOR_INTERMEDIATE_OPEN    = 5   # stopped at a partially-open position
-DOOR_INTERMEDIATE_CLOSED  = 6   # stopped close to the closed position
+DOOR_INTERMEDIATE_OPEN    = 5   # stopped at the Intermediate Open position (higher partial-open)
+DOOR_INTERMEDIATE_CLOSED  = 6   # stopped at the Intermediate Closed position (lower partial-open)
 
 DOOR_POSITION_NAMES = {
     DOOR_STOPPED:             "Stopped",
