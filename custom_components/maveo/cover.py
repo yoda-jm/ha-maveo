@@ -74,8 +74,12 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        pos = (self.coordinator.data or {}).get("door_position")
-        return {"position_name": DOOR_POSITION_NAMES.get(pos, "unknown")}
+        data = self.coordinator.data or {}
+        attrs = {"position_name": DOOR_POSITION_NAMES.get(data.get("door_position"), "unknown")}
+        if data.get("ime_open") is not None:
+            attrs["intermediate_open_configured"]  = data["ime_open"]
+            attrs["intermediate_close_configured"] = data["ime_close"]
+        return attrs
 
     async def async_open_cover(self, **kwargs) -> None:
         await self.coordinator.async_send_command(Command.GARAGE_OPEN)

@@ -30,6 +30,7 @@ from .guest_coordinator import MaveoGuestCoordinator
 @dataclass(frozen=True)
 class MaveoSensorDescription(SensorEntityDescription):
     data_key: str = ""
+    availability_key: str | None = None  # coordinator data key that must be truthy
 
 
 DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
@@ -70,6 +71,62 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         icon="mdi:help-network-outline",
         entity_category=EntityCategory.DIAGNOSTIC,
         data_key="is_bluefi",
+    ),
+    # Outdoor weather (requires GPS to be configured on the stick)
+    MaveoSensorDescription(
+        key="weather_temperature",
+        translation_key="weather_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement="°C",
+        state_class=SensorStateClass.MEASUREMENT,
+        data_key="weather_temperature",
+        availability_key="has_gps",
+    ),
+    MaveoSensorDescription(
+        key="weather_humidity",
+        translation_key="weather_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        data_key="weather_humidity",
+        availability_key="has_gps",
+    ),
+    # H+T sensor status entity (always visible, metadata as attributes)
+    MaveoSensorDescription(
+        key="ht_sensor",
+        translation_key="ht_sensor",
+        icon="mdi:chip",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        data_key="ht_sensor_paired",
+    ),
+    # Indoor H+T sensor readings (requires sensor to be paired)
+    MaveoSensorDescription(
+        key="indoor_temperature",
+        translation_key="indoor_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement="°C",
+        state_class=SensorStateClass.MEASUREMENT,
+        data_key="ht_temperature",
+        availability_key="ht_sensor_paired",
+    ),
+    MaveoSensorDescription(
+        key="indoor_humidity",
+        translation_key="indoor_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        data_key="ht_humidity",
+        availability_key="ht_sensor_paired",
+    ),
+    MaveoSensorDescription(
+        key="indoor_battery",
+        translation_key="indoor_battery",
+        device_class=SensorDeviceClass.BATTERY,
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        data_key="ht_battery",
+        availability_key="ht_sensor_paired",
     ),
 )
 
@@ -148,9 +205,13 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
 
     @property
     def available(self) -> bool:
-        return bool(
-            self.coordinator.data and self.coordinator.data.get("online")
-        )
+        data = self.coordinator.data or {}
+        if not data.get("online"):
+            return False
+        av_key = self.entity_description.availability_key
+        if av_key is not None:
+            return bool(data.get(av_key))
+        return True
 
     @property
     def native_value(self) -> Any:
@@ -167,12 +228,17 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
             if is_bluefi is None:
                 return None
             return "BlueFi" if is_bluefi else "Connect"
+        if self.entity_description.key == "ht_sensor":
+            paired = data.get("ht_sensor_paired")
+            if paired is None:
+                return None
+            return "paired" if paired else "not paired"
         return data.get(key)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
         if self.entity_description.key == "rssi":
-            data = self.coordinator.data or {}
             attrs: dict[str, Any] = {}
             if data.get("wifi_ssid") is not None:
                 attrs["ssid"] = data["wifi_ssid"]
@@ -180,6 +246,25 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
                 attrs["ip"] = data["wifi_ip"]
             if data.get("wifi_mac") is not None:
                 attrs["mac"] = data["wifi_mac"]
+            return attrs
+        if self.entity_description.key == "ht_sensor":
+            attrs = {}
+            for src_key, attr_name in (
+                ("ht_temperature",  "temperature"),
+                ("ht_humidity",     "humidity"),
+                ("ht_battery",      "battery"),
+                ("ht_last_update",  "last_update"),
+                ("ht_name",         "name"),
+                ("ht_manufacturer", "manufacturer"),
+                ("ht_model",        "model"),
+                ("ht_serial",       "serial"),
+                ("ht_firmware_rev", "firmware_rev"),
+                ("ht_software_rev", "software_rev"),
+                ("ht_hardware_rev", "hardware_rev"),
+            ):
+                val = data.get(src_key)
+                if val is not None:
+                    attrs[attr_name] = val
             return attrs
         return {}
 

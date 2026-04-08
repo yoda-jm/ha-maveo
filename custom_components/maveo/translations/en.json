@@ -28,7 +28,13 @@
       "ttc": {"name": "Time to close"},
       "rssi": {"name": "WiFi signal"},
       "buzzer": {"name": "Buzzer"},
-      "stick_type": {"name": "Stick type (guessed)"}
+      "stick_type": {"name": "Stick type (guessed)"},
+      "weather_temperature": {"name": "Outdoor temperature"},
+      "weather_humidity": {"name": "Outdoor humidity"},
+      "indoor_temperature": {"name": "Indoor temperature"},
+      "indoor_humidity": {"name": "Indoor humidity"},
+      "indoor_battery": {"name": "Indoor sensor battery"},
+      "ht_sensor": {"name": "Indoor sensor"}
     },
     "binary_sensor": {
       "connectivity": {"name": "Cloud connectivity"}

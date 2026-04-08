@@ -48,7 +48,12 @@ class Command:
     GPS_READ      = {"AtoS_gps_req": 0}     # → StoA_gps: {lat, lng} or 0 if unavailable
     WIFI_READ     = {"AtoS_wifi_ap": 0}     # → StoA_wifi_ap: {ssid, ip, mac, rssi, error}
     # Commands found in binary / confirmed in STATUS dump (payload value TBC)
-    SENSOR_READ   = {"AtoS_sensor": 0}      # → StoA_sensor: {command, error, bt_addr} / {update_interval}
+    SENSOR_PRESENCE  = {"AtoS_sensor": 0, "command": 0}  # → StoA_sensor: {error} — error:2=no sensor, error:0=paired
+    SENSOR_READINGS  = {"AtoS_sensor": 0, "command": 7}  # → StoA_sensor: {temperature_val, humidity_val, battery_val, last_update}
+                                                          #   units: temperature_val 0.01°C, humidity_val 0.01% (unconfirmed — no live sensor)
+                                                          #   produces two responses: data packet + {"state":9} (discard)
+    SENSOR_METADATA  = {"AtoS_sensor": 0, "command": 6}  # → StoA_sensor: {name, manufacturer, model, serial_num, fw/sw/hw_rev}
+    SENSOR_FULL      = {"AtoS_sensor": 0, "command": 8}  # → StoA_sensor: readings + metadata combined (commands 6+7)
     VENTILATION_READ = {"AtoS_ventilation": 0}  # → StoA_ventilation: runtime state + config
     WEATHER_READ  = {"AtoS_weather": 0}     # → StoA_weather: {humidity (0.01%), temperature (0.01°C), last_update}
     IME_LEARN_READ = {"AtoS_req_ime_learn": 0}  # → StoA_ime_learn: {open, close} (1=learned)

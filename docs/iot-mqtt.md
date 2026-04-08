@@ -166,12 +166,21 @@ All of these work on both stick types via explicit request:
 | Ventilation config | `{"AtoS_ventilation": 0, "command": 1}` | `StoA_ventilation` (command 1) | Full schedule fields |
 | Sensor presence | `{"AtoS_sensor": 0, "command": 0}` | `StoA_sensor` (command 0) | `error:2` = no HT sensor paired |
 | Sensor update interval | `{"AtoS_sensor": 0, "command": 5}` | `StoA_sensor` (command 5) | Returns interval even without sensor |
+| Sensor metadata | `{"AtoS_sensor": 0, "command": 6}` | `StoA_sensor` (command 6) | `name`, `manufacturer`, `model`, `serial_num`, `firmware_rev`, `software_rev`, `hardware_rev` |
+| Sensor readings | `{"AtoS_sensor": 0, "command": 7}` | `StoA_sensor` (command 7) | `temperature_val`, `humidity_val`, `battery_val`, `last_update` — **use this for live readings** |
+| Sensor readings + metadata | `{"AtoS_sensor": 0, "command": 8}` | `StoA_sensor` (command 8) | Combined fields of commands 6 and 7 |
 | IME positions | `{"AtoS_req_ime_learn": 0}` | `StoA_ime_learn` | `open`/`close`: 0=not learned, 1=learned |
 | Weather | `{"AtoS_weather": 0}` | `StoA_weather` | lat/lng optional — see below |
 
 **Feature detection via error field:**
 `{"AtoS_sensor": 0, "command": 0}` → `error:0` = HT sensor paired, `error:2` = no sensor.
+Commands 6/7/8 always respond with `error:0` regardless of sensor presence — use command 0 to detect pairing.
 Ventilation always responds (even if unconfigured) — use `mode:0` to detect disabled.
+
+**H+T sensor commands produce two responses:** the data packet followed by `{"StoA_sensor":0,"command":N,"error":0,"state":9}` — meaning of `state:9` unknown, discard it.
+
+**H+T sensor units** (unconfirmed — all-zero response when no sensor paired, assumed same as weather):
+`temperature_val`: 0.01 °C. `humidity_val`: 0.01 %. `battery_val`: likely 0–100 %.
 
 **`AtoS_vent_state` does not exist as a request** — `StoA_vent_state` is only pushed in the BlueFi STATUS dump, never requestable.
 
