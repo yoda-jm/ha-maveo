@@ -307,6 +307,8 @@ def cmd_control(config, device_id: str, action: str, listen: float):
 def cmd_raw(config, device_id: str, payload: str, listen: float, topic: str | None):
     """Send a raw JSON payload to the device command topic and print all responses."""
     import json as _json
+    from maveo.iot import _mqtt_publish_packet
+
     try:
         command = _json.loads(payload)
     except _json.JSONDecodeError as e:
@@ -322,58 +324,26 @@ def cmd_raw(config, device_id: str, payload: str, listen: float, topic: str | No
         sys.exit(1)
 
     cmd_topic = topic or f"{device_id}/cmd"
-    rsp_topic = f"{device_id}/rsp"
     print(f"Device  : {status.device}")
     print(f"Topic   : {cmd_topic}")
     print(f"Payload : {_json.dumps(command)}")
 
     async def _run():
-        from maveo.iot import _sigv4_headers, _mqtt_connect_packet, _mqtt_subscribe_packet, _mqtt_publish_packet, _parse_mqtt_packet
-        import websockets as _ws
+        async with MaveoIoTClient(auth, config, device_id) as iot:
+            print("WebSocket connected")
+            suback = await iot.subscribe()
+            print(f"SUBACK  : {suback}")
 
-        headers = _sigv4_headers(
-            hostname=config.iot_hostname,
-            region=config.aws_region,
-            access_key=auth.access_key_id,
-            secret_key=auth.secret_key,
-            session_token=auth.session_token,
-        )
-        ws = await _ws.connect(
-            f"wss://{config.iot_hostname}/mqtt",
-            subprotocols=["mqtt"],
-            additional_headers=headers,
-            open_timeout=15,
-        )
-        print("WebSocket connected")
+            raw_bytes = _json.dumps(command).encode()
+            await iot._ws.send(_mqtt_publish_packet(cmd_topic, raw_bytes))
+            print(f"Sent    : {raw_bytes.decode()}")
+            print(f"Listening for {listen}s...")
 
-        await ws.send(_mqtt_connect_packet(device_id))
-        data = await asyncio.wait_for(ws.recv(), timeout=10)
-        pkt = _parse_mqtt_packet(data)
-        print(f"CONNACK : {pkt}")
-
-        await ws.send(_mqtt_subscribe_packet(rsp_topic, packet_id=1))
-        data = await asyncio.wait_for(ws.recv(), timeout=10)
-        pkt = _parse_mqtt_packet(data)
-        print(f"SUBACK  : {pkt}")
-
-        raw_bytes = _json.dumps(command).encode()
-        await ws.send(_mqtt_publish_packet(cmd_topic, raw_bytes))
-        print(f"Sent    : {raw_bytes.decode()}")
-        print(f"Listening for {listen}s on {rsp_topic}...")
-
-        deadline = asyncio.get_event_loop().time() + listen
-        while asyncio.get_event_loop().time() < deadline:
-            try:
-                data = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                pkt = _parse_mqtt_packet(data)
-                print(f"  << {pkt}")
-            except asyncio.TimeoutError:
-                pass
-            except _ws.exceptions.ConnectionClosed:
-                print("Connection closed by server.")
-                break
-
-        await ws.close()
+            deadline = asyncio.get_event_loop().time() + listen
+            while asyncio.get_event_loop().time() < deadline:
+                pkt = await iot.receive(timeout=1.0)
+                if pkt:
+                    print(f"  << {pkt}")
 
     asyncio.run(_run())
 
