@@ -194,6 +194,19 @@ def _mqtt_publish_packet(topic: str, payload: bytes) -> bytes:
     return b"\x30" + _encode_remaining_length(len(remaining)) + remaining
 
 
+def _decode_remaining_length(data: bytes) -> tuple[int, int]:
+    """
+    Decode the MQTT variable-length remaining-length field starting at data[1].
+    Returns (value, number_of_bytes_consumed).
+    """
+    value = 0
+    for i, byte in enumerate(data[1:5]):   # up to 4 bytes
+        value |= (byte & 0x7F) << (7 * i)
+        if not (byte & 0x80):
+            return value, i + 1
+    raise ValueError("Malformed remaining-length field")
+
+
 def _parse_mqtt_packet(data: bytes) -> dict:
     """Parse a received MQTT packet into a dict for logging/inspection."""
     if len(data) < 2:
@@ -207,23 +220,30 @@ def _parse_mqtt_packet(data: bytes) -> dict:
     }
     result = {"type": names.get(msg_type, f"0x{data[0]:02x}"), "raw": data.hex()}
 
-    if msg_type == 2 and len(data) >= 4:   # CONNACK
-        result["return_code"] = data[3]
+    try:
+        _, rl_size = _decode_remaining_length(data)
+    except ValueError:
+        return result
+    hdr = 1 + rl_size   # offset where variable header / payload start
 
-    elif msg_type == 3 and len(data) > 4:  # PUBLISH
-        topic_len = int.from_bytes(data[2:4], "big")
-        if len(data) >= 4 + topic_len:
-            result["topic"]   = data[4:4 + topic_len].decode(errors="replace")
-            raw_payload       = data[4 + topic_len:]
+    if msg_type == 2 and len(data) >= hdr + 2:   # CONNACK
+        result["return_code"] = data[hdr + 1]
+
+    elif msg_type == 3 and len(data) > hdr + 2:  # PUBLISH
+        topic_len = int.from_bytes(data[hdr:hdr + 2], "big")
+        body_start = hdr + 2 + topic_len
+        if len(data) >= body_start:
+            result["topic"]   = data[hdr + 2:body_start].decode(errors="replace")
+            raw_payload       = data[body_start:]
             result["payload"] = raw_payload.decode(errors="replace")
             try:
                 result["json"] = json.loads(raw_payload)
             except json.JSONDecodeError:
                 pass
 
-    elif msg_type == 9 and len(data) >= 5:  # SUBACK
-        result["packet_id"]   = int.from_bytes(data[2:4], "big")
-        result["granted_qos"] = list(data[4:])
+    elif msg_type == 9 and len(data) >= hdr + 3:  # SUBACK
+        result["packet_id"]   = int.from_bytes(data[hdr:hdr + 2], "big")
+        result["granted_qos"] = list(data[hdr + 2:])
 
     return result
 
