@@ -102,7 +102,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Status check failed: {err}") from err
 
         result = dict(_EMPTY)
-        result["online"] = status.device == "CONNECTED"
+        result["online"] = status.is_online
 
         if not result["online"]:
             return result

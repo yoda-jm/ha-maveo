@@ -1,7 +1,7 @@
 """Maveo Python library — Home Assistant integration foundation."""
 
 from .auth import AuthResult, AuthError, authenticate
-from .client import (APIError, Device, DeviceStatus, GuestUser, MaveoClient,
+from .client import (APIError, Device, DeviceStatus, DEVICE_ONLINE_STATES, GuestUser, MaveoClient,
                       RIGHTS_ADMIN, RIGHTS_RESTRICTED, decode_guest_link)
 from .iot import (Command, MaveoIoTClient,
                    DOOR_STOPPED, DOOR_OPENING, DOOR_CLOSING, DOOR_OPEN,
@@ -16,6 +16,7 @@ __all__ = [
     "AuthError",
     "AuthResult",
     "APIError",
+    "DEVICE_ONLINE_STATES",
     "Command",
     "DOOR_STOPPED",
     "DOOR_OPENING",

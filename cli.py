@@ -38,7 +38,7 @@ from maveo import (authenticate, get_config, Command, MaveoClient, MaveoIoTClien
                    get_installation_token, fetch_remote_config, FirebaseError,
                    MaveoProClient, MaveoProError, DOOR_POSITION_NAMES)
 from maveo.auth import AuthError
-from maveo.client import APIError
+from maveo.client import APIError, Device
 
 KEYRING_SERVICE = "maveo"
 KEYRING_EMAIL_KEY = "_account"
@@ -282,7 +282,7 @@ def cmd_control(config, device_id: str, action: str, listen: float):
 
     # Check device is online (session UUID is not needed for MQTT topics)
     status = client.get_device_status(device_id)
-    if status.device != "CONNECTED":
+    if not status.is_online:
         print(f"Device is not connected (status: {status.device}).", file=sys.stderr)
         sys.exit(1)
     print(f"Device  : {status.device}")
@@ -310,7 +310,7 @@ def cmd_info(config, device_id: str):
     client = MaveoClient(auth, config)
 
     status = client.get_device_status(device_id)
-    if status.device != "CONNECTED":
+    if not status.is_online:
         print(f"Device is not connected (status: {status.device}).", file=sys.stderr)
         sys.exit(1)
 
@@ -407,12 +407,13 @@ def _bugreport_device(client, auth, config, device: "Device", redact: bool, verb
         session_display = "(empty)" if not status.session else (
             "<redacted>" if redact else status.session
         )
+        online_label = "online" if status.is_online else "offline"
         lines += [
-            f"Device    : {status.device}",
+            f"Device    : {status.device} ({online_label})",
             f"Mobile    : {status.mobile}",
             f"Session   : {session_display}",
         ]
-        online = status.device == "CONNECTED"
+        online = status.is_online
     except Exception as e:
         lines.append(f"ERROR fetching status: {e}")
         online = False
@@ -420,7 +421,7 @@ def _bugreport_device(client, auth, config, device: "Device", redact: bool, verb
     lines += ["", "--- IoT Sensors ---"]
 
     if not online:
-        lines.append("(skipped — device not CONNECTED)")
+        lines.append("(skipped — device not connected)")
         return lines
 
     async def _run():
@@ -499,7 +500,8 @@ def cmd_bugreport(config, device_id: str | None, redact: bool, verbose: bool):
         version = importlib.metadata.version("maveo")
     except importlib.metadata.PackageNotFoundError:
         try:
-            import json as _json, os as _os
+            import json as _json
+            import os as _os
             _manifest = _os.path.join(
                 _os.path.dirname(__file__),
                 "custom_components", "maveo", "manifest.json",
@@ -512,7 +514,6 @@ def cmd_bugreport(config, device_id: str | None, redact: bool, verbose: bool):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if device_id:
-        from maveo.client import Device
         devices = [Device(id=device_id, name=device_id, device_type="unknown")]
     else:
         try:

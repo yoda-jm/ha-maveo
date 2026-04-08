@@ -28,9 +28,18 @@ class Device:
 
 @dataclass
 class DeviceStatus:
-    device: str   # cloud connectivity state ("CONNECTED" / "DISCONNECTED")
+    device: str   # cloud connectivity state ("CONNECTED" / "new" / "DISCONNECTED")
     mobile: str   # mobile app connection state
     session: str  # UUID used as MQTT topic prefix for IoT commands
+
+    @property
+    def is_online(self) -> bool:
+        return self.device in DEVICE_ONLINE_STATES
+
+
+# Cloud status values that indicate the device is reachable.
+# "new" is returned for freshly provisioned devices that are connected.
+DEVICE_ONLINE_STATES: frozenset[str] = frozenset({"CONNECTED", "new"})
 
 
 RIGHTS_RESTRICTED = 0   # geofence-limited (client-side, min 250 m radius)
