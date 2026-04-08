@@ -30,20 +30,21 @@ _READ_COMMANDS = [
 ]
 
 _EMPTY: dict[str, Any] = {
-    "online":      False,
+    "online":        False,
+    "is_bluefi":     None,
     "door_position": None,
-    "light_on":    None,
-    "firmware":    None,
-    "serial":      None,
-    "device_name": None,
-    "ttc_minutes": None,
-    "buzzer_on":   None,
-    "gps_lat":     None,
-    "gps_lng":     None,
-    "wifi_ssid":   None,
-    "wifi_ip":     None,
-    "wifi_mac":    None,
-    "wifi_rssi":   None,
+    "light_on":      None,
+    "firmware":      None,
+    "serial":        None,
+    "device_name":   None,
+    "ttc_minutes":   None,
+    "buzzer_on":     None,
+    "gps_lat":       None,
+    "gps_lng":       None,
+    "wifi_ssid":     None,
+    "wifi_ip":       None,
+    "wifi_mac":      None,
+    "wifi_rssi":     None,
 }
 
 
@@ -124,6 +125,24 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await iot.subscribe()
             for key, cmd, response_key in _READ_COMMANDS:
                 await iot.send(cmd)
+
+                if key == "door_position":
+                    # BlueFi sends a full state dump before StoA_s (which arrives last).
+                    # Connect stick sends only StoA_s.
+                    # Detect stick type by whether we receive any non-StoA_s packet first.
+                    is_bluefi = False
+                    for _ in range(15):
+                        pkt = await iot.receive(timeout=3.0)
+                        if not pkt or "json" not in pkt:
+                            break
+                        d = pkt["json"]
+                        if "StoA_s" in d:
+                            updates["door_position"] = d["StoA_s"]
+                            break
+                        is_bluefi = True
+                    updates["is_bluefi"] = is_bluefi
+                    continue
+
                 pkt = await iot.receive(timeout=3.0)
                 if not pkt or "json" not in pkt:
                     continue

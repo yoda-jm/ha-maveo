@@ -64,6 +64,13 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         data_key="buzzer_on",
     ),
+    MaveoSensorDescription(
+        key="stick_type",
+        translation_key="stick_type",
+        icon="mdi:help-network-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        data_key="is_bluefi",
+    ),
 )
 
 
@@ -155,6 +162,11 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
         if self.entity_description.key == "buzzer":
             val = data.get("buzzer_on")
             return "on" if val else "off" if val is not None else None
+        if self.entity_description.key == "stick_type":
+            is_bluefi = data.get("is_bluefi")
+            if is_bluefi is None:
+                return None
+            return "BlueFi" if is_bluefi else "Connect"
         return data.get(key)
 
     @property

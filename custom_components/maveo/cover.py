@@ -37,9 +37,7 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
     """Maveo garage door."""
 
     _attr_device_class = CoverDeviceClass.GARAGE
-    _attr_supported_features = (
-        CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
-    )
+    _attr_supported_features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE
     _attr_has_entity_name = True
     _attr_translation_key = "garage_door"
 
@@ -83,7 +81,8 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
         await self.coordinator.async_send_command(Command.GARAGE_OPEN)
 
     async def async_close_cover(self, **kwargs) -> None:
-        await self.coordinator.async_send_command(Command.GARAGE_CLOSE)
-
-    async def async_stop_cover(self, **kwargs) -> None:
-        await self.coordinator.async_send_command(Command.GARAGE_STOP)
+        # BlueFi supports a dedicated CLOSE command (AtoS_g:2).
+        # Connect stick uses the toggle command (AtoS_g:0) which cycles the drive.
+        is_bluefi = (self.coordinator.data or {}).get("is_bluefi", False)
+        cmd = Command.GARAGE_CLOSE if is_bluefi else Command.GARAGE_STOP
+        await self.coordinator.async_send_command(cmd)

@@ -27,7 +27,8 @@
       "firmware": {"name": "Firmware"},
       "ttc": {"name": "Time to close"},
       "rssi": {"name": "WiFi signal"},
-      "buzzer": {"name": "Buzzer"}
+      "buzzer": {"name": "Buzzer"},
+      "stick_type": {"name": "Stick type (guessed)"}
     },
     "binary_sensor": {
       "connectivity": {"name": "Cloud connectivity"}
