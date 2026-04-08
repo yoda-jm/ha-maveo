@@ -18,6 +18,7 @@ from .iot import (
     DOOR_CLOSING,
     DOOR_OPENING,
     DOOR_POSITION_NAMES,
+    DOOR_STOPPED,
     Command,
 )
 
@@ -61,7 +62,7 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
     @property
     def is_closed(self) -> bool | None:
         pos = (self.coordinator.data or {}).get("door_position")
-        if pos is None:
+        if pos is None or pos == DOOR_STOPPED:
             return None
         return pos == DOOR_CLOSED
 
