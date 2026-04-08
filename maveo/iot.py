@@ -34,7 +34,7 @@ class Command:
     GARAGE_OPEN       = {"AtoS_g": 1}   # confirmed live: opens door
     GARAGE_CLOSE      = {"AtoS_g": 2}   # confirmed live: closes door
     GARAGE_STOP       = {"AtoS_g": 0}   # confirmed live: stops door mid-travel
-    GARAGE_VENTILATE  = {"AtoS_g": 3}   # from binary: ventilate position (partial open)
+    GARAGE_VENTILATE  = {"AtoS_g": 3}   # ventilation position (which intermediate position is used: conflicting docs)
     # Read commands
     STATUS        = {"AtoS_s": 0}   # → StoA_s: door position int
                                      #   NOTE: also triggers a full state dump (see docs/iot-mqtt.md):
@@ -61,8 +61,8 @@ DOOR_OPENING              = 1
 DOOR_CLOSING              = 2
 DOOR_OPEN                 = 3
 DOOR_CLOSED               = 4
-DOOR_INTERMEDIATE_OPEN    = 5   # stopped at a partially-open position
-DOOR_INTERMEDIATE_CLOSED  = 6   # stopped close to the closed position
+DOOR_INTERMEDIATE_OPEN    = 5   # stopped at the Intermediate Open position (higher partial-open)
+DOOR_INTERMEDIATE_CLOSED  = 6   # stopped at the Intermediate Closed position (lower partial-open)
 
 DOOR_POSITION_NAMES = {
     DOOR_STOPPED:             "Stopped",

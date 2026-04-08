@@ -206,12 +206,32 @@ Full `DoorPosition` enum extracted from binary string table (sequential, starts 
 | `2` | `DoorPositionClosing` | Door is moving closed (**confirmed live**) |
 | `3` | `DoorPositionOpen` | Door is fully open (**confirmed live**) |
 | `4` | `DoorPositionClosed` | Door is fully closed (**confirmed live**) |
-| `5` | `DoorPositionIntermediateOpen` | Unknown — from binary enum, never observed |
-| `6` | `DoorPositionIntermediateClosed` | Unknown — from binary enum, never observed |
+| `5` | `DoorPositionIntermediateOpen` | Door stopped at the learned **Intermediate position OPEN** |
+| `6` | `DoorPositionIntermediateClosed` | Door stopped at the learned **Intermediate position CLOSED** |
 
 The original binary enum name for `0` is `DoorPositionUnknown` but live testing
-confirms it is sent when the door is stopped mid-travel. Values 5 and 6 exist in the
-binary string table but have not been observed in practice — their exact meaning is unknown.
+confirms it is sent when the door is stopped mid-travel.
+
+Values 5 and 6 correspond to the **Intermediate position** feature of compatible
+Marantec drives. Two additional stops can be taught alongside the standard Open/Closed
+endpoints:
+
+```
+Fully Closed — Intermediate Closed — Intermediate Open — Fully Open
+     4                 6                     5                3
+```
+
+Both must be explicitly assigned to a remote or stick button to be triggered — they are
+not automatically accessible just because the drive knows them. Only one coordinate per
+type is stored (most recently taught wins).
+
+`AtoS_g:3` (`ventilateGarageDoor`) moves to one of the intermediate positions. The maveo
+app labels this "ventilate". **Which intermediate position is targeted is unknown —
+Marantec documentation is conflicting on this point.**
+
+Feature presence: `StoA_ime_learn` → `open:1, close:1` = both positions taught;
+`open:0, close:0` = not configured. `ime_pos_valid` in `StoA_ventilation` carries the
+same information.
 
 ---
 
