@@ -304,6 +304,80 @@ def cmd_control(config, device_id: str, action: str, listen: float):
     asyncio.run(_run())
 
 
+def cmd_raw(config, device_id: str, payload: str, listen: float, topic: str | None):
+    """Send a raw JSON payload to the device command topic and print all responses."""
+    import json as _json
+    try:
+        command = _json.loads(payload)
+    except _json.JSONDecodeError as e:
+        print(f"Invalid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+
+    status = client.get_device_status(device_id)
+    if not status.is_online:
+        print(f"Device is not connected (status: {status.device}).", file=sys.stderr)
+        sys.exit(1)
+
+    cmd_topic = topic or f"{device_id}/cmd"
+    rsp_topic = f"{device_id}/rsp"
+    print(f"Device  : {status.device}")
+    print(f"Topic   : {cmd_topic}")
+    print(f"Payload : {_json.dumps(command)}")
+
+    async def _run():
+        from maveo.iot import _sigv4_headers, _mqtt_connect_packet, _mqtt_subscribe_packet, _mqtt_publish_packet, _parse_mqtt_packet
+        import websockets as _ws
+
+        headers = _sigv4_headers(
+            hostname=config.iot_hostname,
+            region=config.aws_region,
+            access_key=auth.access_key_id,
+            secret_key=auth.secret_key,
+            session_token=auth.session_token,
+        )
+        ws = await _ws.connect(
+            f"wss://{config.iot_hostname}/mqtt",
+            subprotocols=["mqtt"],
+            additional_headers=headers,
+            open_timeout=15,
+        )
+        print("WebSocket connected")
+
+        await ws.send(_mqtt_connect_packet(device_id))
+        data = await asyncio.wait_for(ws.recv(), timeout=10)
+        pkt = _parse_mqtt_packet(data)
+        print(f"CONNACK : {pkt}")
+
+        await ws.send(_mqtt_subscribe_packet(rsp_topic, packet_id=1))
+        data = await asyncio.wait_for(ws.recv(), timeout=10)
+        pkt = _parse_mqtt_packet(data)
+        print(f"SUBACK  : {pkt}")
+
+        raw_bytes = _json.dumps(command).encode()
+        await ws.send(_mqtt_publish_packet(cmd_topic, raw_bytes))
+        print(f"Sent    : {raw_bytes.decode()}")
+        print(f"Listening for {listen}s on {rsp_topic}...")
+
+        deadline = asyncio.get_event_loop().time() + listen
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                data = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                pkt = _parse_mqtt_packet(data)
+                print(f"  << {pkt}")
+            except asyncio.TimeoutError:
+                pass
+            except _ws.exceptions.ConnectionClosed:
+                print("Connection closed by server.")
+                break
+
+        await ws.close()
+
+    asyncio.run(_run())
+
+
 def cmd_info(config, device_id: str):
     """Query all IoT read commands and display results in a human-readable form."""
     auth = _login(config)
@@ -675,6 +749,14 @@ def main():
     p.add_argument("--listen", type=float, default=5.0,
                    metavar="SECS", help="Seconds to listen for responses (default: 5)")
 
+    p = sub.add_parser("raw",         help="Send a raw JSON payload to the device command topic")
+    p.add_argument("device_id")
+    p.add_argument("payload",         help='Raw JSON string, e.g. \'{"AtoS_g": 0}\'')
+    p.add_argument("--listen", type=float, default=5.0,
+                   metavar="SECS", help="Seconds to listen for responses (default: 5)")
+    p.add_argument("--topic",         default=None,
+                   metavar="TOPIC",   help="Override MQTT topic (default: {device_id}/cmd)")
+
     p = sub.add_parser("pro-customer", help="Get MaveoPro customer profile + devices")
     p.add_argument("--email", metavar="EMAIL",
                    help="Account email (default: uses stored/env credentials)")
@@ -728,6 +810,8 @@ def main():
             cmd_bugreport(config, args.device_id, redact=not args.no_redact, verbose=args.verbose)
         elif args.command == "control":
             cmd_control(config, args.device_id, args.action, args.listen)
+        elif args.command == "raw":
+            cmd_raw(config, args.device_id, args.payload, args.listen, args.topic)
         elif args.command == "pro-customer":
             email = args.email or get_credentials()[0]
             cmd_pro_customer(config, email)
