@@ -20,6 +20,7 @@ Usage:
     python cli.py decode-link <url>            # decrypt a guest deep link
     python cli.py rename <device_id> <new_name>
     python cli.py info <device_id>             # query all IoT sensors and display
+    python cli.py bugreport <device_id>        # collect all info for a GitHub bug report (redacted by default)
     python cli.py firebase-token               # get Firebase Installation auth token
     python cli.py firebase-rc                  # fetch Firebase Remote Config
     python cli.py pro-customer                 # MaveoPro profile + devices (api.yourgateway.io)
@@ -282,7 +283,7 @@ def cmd_control(config, device_id: str, action: str, listen: float):
     # Check device is online (session UUID is not needed for MQTT topics)
     status = client.get_device_status(device_id)
     if status.device != "CONNECTED":
-        print("Device is offline.", file=sys.stderr)
+        print(f"Device is not connected (status: {status.device}).", file=sys.stderr)
         sys.exit(1)
     print(f"Device  : {status.device}")
     print(f"Sending : {action} → {_ACTIONS[action]}")
@@ -310,7 +311,7 @@ def cmd_info(config, device_id: str):
 
     status = client.get_device_status(device_id)
     if status.device != "CONNECTED":
-        print("Device is offline.", file=sys.stderr)
+        print(f"Device is not connected (status: {status.device}).", file=sys.stderr)
         sys.exit(1)
 
     READ_COMMANDS = [
@@ -379,6 +380,162 @@ def cmd_info(config, device_id: str):
             mac  = data.get("mac", "?")
             rssi = data.get("rssi", "?")
             print(f"  {label:<18}: ssid={ssid}  ip={ip}  mac={mac}  rssi={rssi} dBm")
+
+
+_BUGREPORT_READ_COMMANDS = [
+    ("Door status",   Command.STATUS,      "StoA_s"),
+    ("Firmware",      Command.VERSION,     "StoA_v"),
+    ("Light",         Command.LIGHT_READ,  "StoA_l_r"),
+    ("Serial",        Command.SERIAL,      "StoA_serial"),
+    ("Device name",   Command.NAME_READ,   "StoA_name_r"),
+    ("Time-to-close", Command.TTC_READ,    "StoA_ttc_r"),
+    ("Buzzer",        Command.BUZZER_READ, "StoA_buzzer_r"),
+    ("GPS",           Command.GPS_READ,    None),
+    ("WiFi",          Command.WIFI_READ,   None),
+]
+
+
+def _bugreport_device(client, auth, config, device: "Device", redact: bool, verbose: bool) -> list[str]:
+    """Return report lines for a single device."""
+    import json as _json
+
+    lines = [f"=== Device: {device.name} ({device.id}) ===", ""]
+
+    lines.append("--- Cloud Status ---")
+    try:
+        status = client.get_device_status(device.id)
+        session_display = "(empty)" if not status.session else (
+            "<redacted>" if redact else status.session
+        )
+        lines += [
+            f"Device    : {status.device}",
+            f"Mobile    : {status.mobile}",
+            f"Session   : {session_display}",
+        ]
+        online = status.device == "CONNECTED"
+    except Exception as e:
+        lines.append(f"ERROR fetching status: {e}")
+        online = False
+
+    lines += ["", "--- IoT Sensors ---"]
+
+    if not online:
+        lines.append("(skipped — device not CONNECTED)")
+        return lines
+
+    async def _run():
+        results = {}
+        async with MaveoIoTClient(auth, config, device.id) as iot:
+            await iot.subscribe()
+            for label, cmd, _ in _BUGREPORT_READ_COMMANDS:
+                await iot.send(cmd)
+                pkt = await iot.receive(timeout=3.0)
+                results[label] = pkt["json"] if (pkt and "json" in pkt) else None
+        return results
+
+    try:
+        results = asyncio.run(_run())
+    except Exception as e:
+        lines.append(f"ERROR fetching IoT data: {e}")
+        return lines
+
+    for label, _, response_key in _BUGREPORT_READ_COMMANDS:
+        data = results.get(label)
+        if data is None:
+            lines.append(f"  {label:<18}: (no response)")
+            continue
+
+        if label == "Door status":
+            val = data.get("StoA_s")
+            name = DOOR_POSITION_NAMES.get(val, f"unknown({val})")
+            lines.append(f"  {label:<18}: {name} (raw={val})")
+        elif label == "Firmware":
+            lines.append(f"  {label:<18}: {data.get('StoA_v', '?')}")
+        elif label == "Light":
+            val = data.get("StoA_l_r")
+            lines.append(f"  {label:<18}: {'on' if val else 'off'}")
+        elif label == "Serial":
+            val = data.get("StoA_serial", "?")
+            lines.append(f"  {label:<18}: {'<redacted>' if redact else val}")
+        elif label == "Device name":
+            lines.append(f"  {label:<18}: {data.get('StoA_name_r', '?')}")
+        elif label == "Time-to-close":
+            val = data.get("StoA_ttc_r", 0)
+            lines.append(f"  {label:<18}: {'disabled' if val == 0 else f'{val} min'}")
+        elif label == "Buzzer":
+            val = data.get("StoA_buzzer_r")
+            lines.append(f"  {label:<18}: {'on' if val else 'off'}")
+        elif label == "GPS":
+            if data.get("StoA_gps") == 0:
+                lat, lng = data.get("lat"), data.get("lng")
+                lines.append(f"  {label:<18}: {'<redacted>' if redact else f'lat={lat}, lng={lng}'}")
+            else:
+                lines.append(f"  {label:<18}: unavailable")
+        elif label == "WiFi":
+            ssid = data.get("ssid", "?")
+            ip   = data.get("ip", "?")
+            mac  = data.get("mac", "?")
+            rssi = data.get("rssi", "?")
+            if redact:
+                mac = "<redacted>"
+                ip  = "<redacted>"
+            lines.append(f"  {label:<18}: ssid={ssid}  ip={ip}  mac={mac}  rssi={rssi} dBm")
+
+        if verbose and data is not None:
+            lines.append(f"    raw: {_json.dumps(data)}")
+
+    return lines
+
+
+def cmd_bugreport(config, device_id: str | None, redact: bool, verbose: bool):
+    """Collect all available device info into a single pasteable bug report."""
+    import importlib.metadata
+    from datetime import datetime, timezone
+
+    auth = _login(config)
+    client = MaveoClient(auth, config)
+
+    try:
+        version = importlib.metadata.version("maveo")
+    except importlib.metadata.PackageNotFoundError:
+        try:
+            import json as _json, os as _os
+            _manifest = _os.path.join(
+                _os.path.dirname(__file__),
+                "custom_components", "maveo", "manifest.json",
+            )
+            with open(_manifest) as _f:
+                version = _json.load(_f).get("version", "unknown")
+        except Exception:
+            version = "unknown"
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if device_id:
+        from maveo.client import Device
+        devices = [Device(id=device_id, name=device_id, device_type="unknown")]
+    else:
+        try:
+            devices = client.list_devices()
+        except Exception as e:
+            print(f"ERROR listing devices: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    lines = [
+        "```",
+        "Maveo Bug Report",
+        f"Generated : {now}",
+        f"Region    : {config.region if hasattr(config, 'region') else 'unknown'}",
+        f"Version   : {version}",
+        f"Devices   : {len(devices)}",
+    ]
+
+    for device in devices:
+        lines.append("")
+        lines.extend(_bugreport_device(client, auth, config, device, redact, verbose))
+
+    lines.append("```")
+    print("\n".join(lines))
 
 
 def cmd_firebase_token():
@@ -503,6 +660,14 @@ def main():
     p = sub.add_parser("info",        help="Query all IoT read commands and display device info")
     p.add_argument("device_id")
 
+    p = sub.add_parser("bugreport",   help="Collect all device info into a pasteable bug report")
+    p.add_argument("device_id", nargs="?", default=None,
+                   help="Device ID to report on (default: all devices)")
+    p.add_argument("--no-redact", action="store_true",
+                   help="Include sensitive fields (serial, MAC, IP, GPS, session) in plain text")
+    p.add_argument("--verbose", action="store_true",
+                   help="Include raw JSON responses from the IoT layer")
+
     p = sub.add_parser("control",     help="Send IoT command to a device")
     p.add_argument("device_id")
     p.add_argument("action", choices=list(_ACTIONS))
@@ -558,6 +723,8 @@ def main():
                             args.location, args.latitude, args.longitude)
         elif args.command == "info":
             cmd_info(config, args.device_id)
+        elif args.command == "bugreport":
+            cmd_bugreport(config, args.device_id, redact=not args.no_redact, verbose=args.verbose)
         elif args.command == "control":
             cmd_control(config, args.device_id, args.action, args.listen)
         elif args.command == "pro-customer":

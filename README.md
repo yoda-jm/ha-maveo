@@ -99,7 +99,22 @@ python cli.py configure          # save credentials to OS keychain
 python cli.py devices            # list devices
 python cli.py info <device_id>   # query all IoT sensors
 python cli.py share-guest <device_id> <user_id>  # generate guest QR link
+python cli.py bugreport          # collect info for all devices (paste into GitHub issue)
+python cli.py bugreport <device_id>          # same, single device
+python cli.py bugreport --verbose            # include raw IoT JSON responses
+python cli.py bugreport --no-redact          # include serial, MAC, IP, GPS, session in plain text
 ```
+
+### Reporting a bug
+
+Run the following command and paste the output into your GitHub issue:
+
+```bash
+python cli.py bugreport
+```
+
+Sensitive fields (serial number, MAC address, IP address, GPS coordinates, session UUID) are
+redacted by default. Add `--no-redact` only if you are comfortable sharing them.
 
 ---
 
