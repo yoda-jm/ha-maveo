@@ -106,15 +106,18 @@ numeric device ID).
 All commands are JSON payloads published to `{device_id}/cmd`.
 Responses arrive on `{device_id}/rsp`.
 
-### Actions (no response expected)
+### Actions
 
-| Action | Payload |
-|---|---|
-| Light ON | `{"AtoS_l": 1}` |
-| Light OFF | `{"AtoS_l": 0}` |
-| Garage OPEN | `{"AtoS_g": 1}` |
-| Garage CLOSE | `{"AtoS_g": 0}` |
-| Garage STOP | `{"AtoS_g": 2}` |
+All garage commands return `{"StoA_g_r": 1}` as an acknowledgement (not an error).
+
+| Action | Payload | Notes |
+|---|---|---|
+| Light ON | `{"AtoS_l": 1}` | |
+| Light OFF | `{"AtoS_l": 0}` | |
+| Garage OPEN | `{"AtoS_g": 1}` | **confirmed live** |
+| Garage CLOSE | `{"AtoS_g": 2}` | **confirmed live** — was incorrectly documented as 0 |
+| Garage STOP | `{"AtoS_g": 0}` | **confirmed live** — was incorrectly documented as 2 |
+| Garage VENTILATE | `{"AtoS_g": 3}` | from binary (`ventilateGarageDoor`), not yet tested live |
 
 ### Read commands (response on rsp topic)
 
@@ -130,18 +133,66 @@ Responses arrive on `{device_id}/rsp`.
 | GPS location | `{"AtoS_gps_req": 0}` | `StoA_gps` + `lat` + `lng` | `{"StoA_gps": 0, "lat": <lat>, "lng": <lng>}` |
 | WiFi info | `{"AtoS_wifi_ap": 0}` | `StoA_wifi_ap` + fields | `{"StoA_wifi_ap": 0, "ssid": "<ssid>", "ip": "<ip>", "mac": "<mac>", "rssi": -73, "error": 0}` |
 
-### Additional commands (found in binary, not yet tested)
+### STATUS behaviour depends on stick type
+
+`{"AtoS_s": 0}` behaviour differs by hardware:
+
+| Stick type | STATUS response |
+|---|---|
+| **maveo connect** (Wi-Fi stick, standalone) | `StoA_s` only |
+| **maveo BlueFi** (plugged into Marantec Comfort 360) | Full state dump — see below |
+
+The full dump observed on a BlueFi device (status `"new"`, confirmed 2026-04-08):
+
+| Response key | Notes |
+|---|---|
+| `StoA_ventilation` (command 0) | Ventilation runtime state — sent **twice** |
+| `StoA_weather` | Outdoor weather (see below) |
+| `StoA_sensor` (command 0) | HT sensor presence / BT address |
+| `StoA_ventilation` (command 1) | Ventilation config / schedule |
+| `StoA_sensor` (command 5) | Sensor update interval |
+| `StoA_gps` | GPS coordinates |
+| `StoA_wifi_ap` | Wi-Fi info |
+| `StoA_ime_learn` | IME learned open/close positions |
+| `StoA_s` | Door position — always **last** |
+
+### Standalone read commands (confirmed 2026-04-08)
+
+All of these work on both stick types via explicit request:
+
+| Command | Payload | Response | Notes |
+|---|---|---|---|
+| Ventilation state | `{"AtoS_ventilation": 0, "command": 0}` | `StoA_ventilation` (command 0) | `mode:0` = disabled |
+| Ventilation config | `{"AtoS_ventilation": 0, "command": 1}` | `StoA_ventilation` (command 1) | Full schedule fields |
+| Sensor presence | `{"AtoS_sensor": 0, "command": 0}` | `StoA_sensor` (command 0) | `error:2` = no HT sensor paired |
+| Sensor update interval | `{"AtoS_sensor": 0, "command": 5}` | `StoA_sensor` (command 5) | Returns interval even without sensor |
+| IME positions | `{"AtoS_req_ime_learn": 0}` | `StoA_ime_learn` | `open`/`close`: 0=not learned, 1=learned |
+| Weather | `{"AtoS_weather": 0}` | `StoA_weather` | lat/lng optional — see below |
+
+**Feature detection via error field:**
+`{"AtoS_sensor": 0, "command": 0}` → `error:0` = HT sensor paired, `error:2` = no sensor.
+Ventilation always responds (even if unconfigured) — use `mode:0` to detect disabled.
+
+**`AtoS_vent_state` does not exist as a request** — `StoA_vent_state` is only pushed in the BlueFi STATUS dump, never requestable.
+
+### Weather command
+
+`{"AtoS_weather": 0}` — lat/lng are optional:
+- Without coordinates (or `lat:0, lng:0`): returns the **last cached weather value** from a previous fetch — likely not weather at 0°N 0°E
+- With real GPS coordinates: fetches outdoor weather for that location from the cloud and caches the result
+
+The weather data is used by the ventilation logic to decide whether to open the door.
+Temperature unit: 0.01 °C (e.g. `2900` = 29.00 °C). Humidity unit: 0.01 % (e.g. `6600` = 66.00 %).
+
+### Additional write commands (from binary, not yet tested live)
 
 | Command | Payload | Notes |
 |---|---|---|
-| Buzzer write | `{"AtoS_buzzer_w": ...}` | Set buzzer enabled/disabled |
+| Buzzer write | `{"AtoS_buzzer_w": 0\|1}` | Set buzzer enabled/disabled |
 | GPS write | `{"AtoS_gps_write": {...}}` | Set GPS coordinates |
 | Name set | `{"AtoS_name_s": "..."}` | Set device name |
 | TTC write | `{"AtoS_ttc_w": N}` | Set time-to-close minutes |
-| Sensor read | `{"AtoS_sensor": ...}` | → `StoA_sensor` |
-| Ventilation | `{"AtoS_ventilation": ...}` | → `StoA_ventilation`, `StoA_vent_state` |
-| Weather | `{"AtoS_weather": ...}` | → `StoA_weather` |
-| IME learn | `{"AtoS_req_ime_learn": ...}` | → `StoA_ime_learn` |
+| Garage ventilate | `{"AtoS_g": 3}` | Open to ventilation position (partial open) |
 | Brake | `{"AtoS_b": ...}` | → `StoA_b` |
 
 ### Door status codes (`StoA_s`)
@@ -164,9 +215,11 @@ binary string table but have not been observed in practice — their exact meani
 
 ---
 
-## Live device data (confirmed 2026-03-28)
+## Live device data
 
-Responses from a live BlueFi device:
+### Confirmed 2026-03-28 — individual read commands
+
+Responses from a live BlueFi device (status `"CONNECTED"`):
 
 ```json
 {"StoA_v":    "1.2.0"}
@@ -178,6 +231,55 @@ Responses from a live BlueFi device:
 {"StoA_buzzer_r": "0"}
 {"StoA_gps": 0, "lat": <lat>, "lng": <lng>}
 {"StoA_wifi_ap": 0, "ssid": "<ssid>", "ip": "<stick-ip>", "mac": "<mac>", "rssi": -73, "error": 0}
+```
+
+### Confirmed 2026-04-08 — BlueFi STATUS dump (device status `"new"`)
+
+All of the following arrived in a single burst after sending `{"AtoS_s": 0}` on a BlueFi stick:
+
+```json
+{"StoA_ventilation":0,"command":0,"error":0,"mode":2,"active":0,"ime_pos_valid":1,"blocked":0,"manual_vent":0,"test_mode":0,"debug":0}
+{"StoA_weather":0,"humidity":4800,"temperature":700,"last_update":1775628089}
+{"StoA_sensor":0,"command":0,"error":0,"bt_addr":[33,102,3,246,88,240]}
+{"StoA_ventilation":0,"command":1,"error":0,"mode":2,"test_mode":0,"temp_low":10,"temp_high":30,"threshold":65,"vent_duration":30,"block_time":120,"dew_point_diff":0,"weather_update_interval":18,"end_time":"17:00","start_time":"06:00","weekdays":127,"time_based_time":"00:00-00:00","time_based_weekdays":0}
+{"StoA_sensor":0,"command":5,"error":0,"update_interval":15}
+{"StoA_gps":0,"lat":<lat>,"lng":<lng>}
+{"StoA_wifi_ap":0,"ssid":"<ssid>","ip":"<ip>","mac":"<mac>","rssi":-65,"error":0}
+{"StoA_ventilation":0,"command":0,...}
+{"StoA_ime_learn":"0","open":1,"close":1}
+{"StoA_s":3}
+```
+
+Note: `StoA_ventilation` command:0 is sent twice (device behaviour).
+
+### Confirmed 2026-04-08 — standalone read commands (maveo connect / Wi-Fi stick, status `"CONNECTED"`)
+
+```json
+// {"AtoS_s": 0} → only door status, no dump
+{"StoA_s": 4}
+
+// {"AtoS_ventilation": 0, "command": 0} → ventilation disabled (mode:0)
+{"StoA_ventilation":0,"command":0,"error":0,"mode":0,"active":0,"ime_pos_valid":0,"blocked":0,"manual_vent":0,"test_mode":0,"debug":0}
+
+// {"AtoS_ventilation": 0, "command": 1} → config (all defaults/zeros = not configured)
+{"StoA_ventilation":0,"command":1,"error":0,"mode":0,"test_mode":0,"temp_low":0,"temp_high":0,"threshold":0,"vent_duration":15,"block_time":120,"dew_point_diff":0,"weather_update_interval":18,"end_time":"00:00","start_time":"00:00","weekdays":0,"time_based_time":"00:00-00:00","time_based_weekdays":0}
+
+// {"AtoS_sensor": 0, "command": 0} → error:2 = no HT sensor paired
+{"StoA_sensor":0,"command":0,"error":2}
+
+// {"AtoS_sensor": 0, "command": 5} → update interval (succeeds even without sensor)
+{"StoA_sensor":0,"command":5,"error":0,"update_interval":5}
+
+// {"AtoS_req_ime_learn": 0} → open:0, close:0 = positions not learned
+{"StoA_ime_learn":"0","open":0,"close":0}
+
+// {"AtoS_weather": 0} or {"AtoS_weather": 0, "lat": 0, "lng": 0} → cached/local value
+{"StoA_weather":0,"humidity":6600,"temperature":2900,"last_update":1775649457}
+
+// {"AtoS_weather": 0, "lat": <lat>, "lng": <lng>} → outdoor weather for that GPS location
+{"StoA_weather":0,"humidity":4200,"temperature":2000,"last_update":1775649569}
+
+// {"AtoS_vent_state": 0} → no response (not a valid request key)
 ```
 
 ---
