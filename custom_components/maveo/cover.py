@@ -85,8 +85,4 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
         await self.coordinator.async_send_command(Command.GARAGE_OPEN)
 
     async def async_close_cover(self, **kwargs) -> None:
-        # BlueFi supports a dedicated CLOSE command (AtoS_g:2).
-        # Connect stick uses the toggle command (AtoS_g:0) which cycles the drive.
-        is_bluefi = (self.coordinator.data or {}).get("is_bluefi", False)
-        cmd = Command.GARAGE_CLOSE if is_bluefi else Command.GARAGE_STOP
-        await self.coordinator.async_send_command(cmd)
+        await self.coordinator.async_send_command(Command.GARAGE_CLOSE)
