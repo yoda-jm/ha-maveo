@@ -43,6 +43,23 @@ Guest entities are created and removed automatically as guest keys are added or 
 4. **Settings → Integrations → Add** → search **Maveo**
 5. Enter your Maveo email, password, and region (EU / US)
 
+### Installing the dev branch (for testing)
+
+The `dev` branch contains features and fixes that are not yet released to `main`.
+
+HACS v2 does not expose a branch picker in the UI — use the **Developer Tools** service call instead:
+
+1. In Home Assistant → **Developer Tools → Actions**
+2. Action: `update.install`
+3. Set the following data:
+   ```yaml
+   entity_id: update.maveo_maveo
+   version: dev
+   ```
+4. Call the action, then restart Home Assistant
+
+To switch back to the latest stable release, call `update.install` again without the `version` field (or set it to the release tag, e.g. `v0.1.0`).
+
 ---
 
 ## Services
@@ -115,6 +132,26 @@ python cli.py bugreport
 
 Sensitive fields (serial number, MAC address, IP address, GPS coordinates, session UUID) are
 redacted by default. Add `--no-redact` only if you are comfortable sharing them.
+
+---
+
+## Troubleshooting
+
+### Garage door close not working
+
+Marantec drives respond differently depending on how the Maveo stick communicates with them.
+The integration defaults to **Direct** mode, but some setups require **Toggle** mode.
+
+| Mode | Close command | Open while closing | Close while opening |
+|------|--------------|-------------------|---------------------|
+| **Direct** | Dedicated close command | Stops the door | Ignored until fully open |
+| **Toggle** | Toggle/direction command | Stops the door | Stops the door |
+
+If closing from Home Assistant does nothing (or only works when the door is already fully open),
+try switching to **Toggle** mode:
+
+1. **Settings → Integrations → Maveo → Configure**
+2. Set your garage door to *Toggle*
 
 ---
 
