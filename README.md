@@ -3,7 +3,7 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5)](https://github.com/hacs/integration)
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue)](https://www.home-assistant.io/)
 [![IoT Class](https://img.shields.io/badge/IoT%20class-Cloud%20Polling-yellow)](https://developers.home-assistant.io/docs/creating_integration_manifest#iot-class)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/yoda-jm/ha-maveo)](https://opensource.org/license/mit)
 [![hassfest](https://github.com/yoda-jm/ha-maveo/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/yoda-jm/ha-maveo/actions/workflows/hassfest.yaml)
 [![HACS validation](https://github.com/yoda-jm/ha-maveo/actions/workflows/hacs.yaml/badge.svg)](https://github.com/yoda-jm/ha-maveo/actions/workflows/hacs.yaml)
 [![Ruff](https://github.com/yoda-jm/ha-maveo/actions/workflows/lint.yaml/badge.svg)](https://github.com/yoda-jm/ha-maveo/actions/workflows/lint.yaml)
