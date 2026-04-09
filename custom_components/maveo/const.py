@@ -3,9 +3,6 @@
 DOMAIN = "maveo"
 
 CONF_REGION = "region"
-CONF_COMMAND_MODE = "command_mode"
-COMMAND_MODE_DIRECT = "direct"
-COMMAND_MODE_TOGGLE = "toggle"
 
 PLATFORMS = [
     "cover",
