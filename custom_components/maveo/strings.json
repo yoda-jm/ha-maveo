@@ -1,4 +1,11 @@
 {
+  "options": {
+    "step": {
+      "init": {
+        "description": "Set the command mode for each garage door. Direct: dedicated open, close and stop commands. Toggle: open and close stop the door if it is moving in the opposite direction."
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {

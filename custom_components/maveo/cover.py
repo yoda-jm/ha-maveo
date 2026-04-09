@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import COMMAND_MODE_DIRECT, COMMAND_MODE_TOGGLE, CONF_COMMAND_MODE, DOMAIN
 from .coordinator import MaveoDeviceCoordinator
 from .iot import (
     DOOR_CLOSED,
@@ -52,6 +52,11 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
         }
 
     @property
+    def _command_mode(self) -> str:
+        device_options = self.coordinator._entry.options.get(self.coordinator.device_id, {})
+        return device_options.get(CONF_COMMAND_MODE, COMMAND_MODE_DIRECT)
+
+    @property
     def available(self) -> bool:
         return bool(
             self.coordinator.data and self.coordinator.data.get("online")
@@ -85,4 +90,5 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
         await self.coordinator.async_send_command(Command.GARAGE_OPEN)
 
     async def async_close_cover(self, **kwargs) -> None:
-        await self.coordinator.async_send_command(Command.GARAGE_CLOSE)
+        cmd = Command.GARAGE_CLOSE if self._command_mode == COMMAND_MODE_DIRECT else Command.GARAGE_STOP
+        await self.coordinator.async_send_command(cmd)
