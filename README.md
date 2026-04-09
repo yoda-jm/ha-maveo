@@ -135,26 +135,6 @@ redacted by default. Add `--no-redact` only if you are comfortable sharing them.
 
 ---
 
-## Troubleshooting
-
-### Garage door close not working
-
-Marantec drives respond differently depending on how the Maveo stick communicates with them.
-The integration defaults to **Direct** mode, but some setups require **Toggle** mode.
-
-| Mode | Close command | Open while closing | Close while opening |
-|------|--------------|-------------------|---------------------|
-| **Direct** | Dedicated close command | Stops the door | Ignored until fully open |
-| **Toggle** | Toggle/direction command | Stops the door | Stops the door |
-
-If closing from Home Assistant does nothing (or only works when the door is already fully open),
-try switching to **Toggle** mode:
-
-1. **Settings → Integrations → Maveo → Configure**
-2. Set your garage door to *Toggle*
-
----
-
 ## Disclaimer
 
 This integration is reverse-engineered from the Maveo Android app and is not affiliated
