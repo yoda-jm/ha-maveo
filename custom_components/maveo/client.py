@@ -305,10 +305,15 @@ class MaveoClient:
         try:
             resp = self._session.post(url, json=payload, timeout=10)
         except requests.RequestException as e:
-            raise APIError(f"Request failed: {e}") from e
+            raise APIError(
+                f"Request to {url} failed: {e} (payload: {payload})"
+            ) from e
 
         if not resp.ok:
-            raise APIError(f"HTTP {resp.status_code}: {resp.text}")
+            raise APIError(
+                f"HTTP {resp.status_code} from {url}: {resp.text}"
+                f" (payload: {payload})"
+            )
 
         return resp.json()
 
@@ -317,9 +322,14 @@ class MaveoClient:
         try:
             resp = self._session.post(url, json=payload, timeout=10)
         except requests.RequestException as e:
-            raise APIError(f"Request failed: {e}") from e
+            raise APIError(
+                f"Request to {url} failed: {e} (payload: {payload})"
+            ) from e
 
         if resp.status_code != 201:
-            raise APIError(f"HTTP {resp.status_code}: {resp.text}")
+            raise APIError(
+                f"HTTP {resp.status_code} from {url}: {resp.text}"
+                f" (payload: {payload})"
+            )
 
         return resp.json()
