@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import ssl
 from datetime import datetime, timezone
 
 import websockets
@@ -327,11 +328,17 @@ class MaveoIoTClient:
             secret_key    = self._auth.secret_key,
             session_token = self._auth.session_token,
         )
+        # Create SSL context in executor to avoid blocking the event loop
+        # (load_default_certs / set_default_verify_paths do blocking I/O)
+        ssl_context = await asyncio.get_running_loop().run_in_executor(
+            None, ssl.create_default_context,
+        )
         self._ws = await websockets.connect(
             f"wss://{self._config.iot_hostname}/mqtt",
             subprotocols=["mqtt"],
             additional_headers=headers,
             open_timeout=15,
+            ssl=ssl_context,
         )
 
         await self._ws.send(_mqtt_connect_packet(self._device_id))
