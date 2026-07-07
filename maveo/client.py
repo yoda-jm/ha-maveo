@@ -39,7 +39,13 @@ class DeviceStatus:
 
 # Cloud status values that indicate the device is reachable.
 # "new" is returned for freshly provisioned devices that are connected.
-DEVICE_ONLINE_STATES: frozenset[str] = frozenset({"CONNECTED", "new"})
+# "MQTT_KEEP_ALIVE_TIMEOUT" means the device's own idle keep-alive lapsed
+# (commonly WiFi/power-saving related) but it can still wake up and respond
+# to commands — the official app keeps working in this state (its "mobile"
+# session stays "connected"), so treat it as reachable rather than give up.
+DEVICE_ONLINE_STATES: frozenset[str] = frozenset(
+    {"CONNECTED", "new", "MQTT_KEEP_ALIVE_TIMEOUT"}
+)
 
 
 RIGHTS_RESTRICTED = 0   # geofence-limited (client-side, min 250 m radius)

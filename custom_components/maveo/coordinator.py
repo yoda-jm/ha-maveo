@@ -86,13 +86,28 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _edata(self) -> dict:
         return self.hass.data[DOMAIN][self._entry.entry_id]
 
-    async def _refresh_auth_if_needed(self) -> None:
-        auth: AuthResult = self._edata()["auth"]
+    def _needs_refresh(self, auth: AuthResult) -> bool:
         expiry = auth.expiration
         if not expiry.tzinfo:
             expiry = expiry.replace(tzinfo=timezone.utc)
-        if expiry < datetime.now(timezone.utc) + timedelta(minutes=10):
-            edata = self._edata()
+        return expiry < datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    async def _refresh_auth_if_needed(self) -> None:
+        edata = self._edata()
+        if not self._needs_refresh(edata["auth"]):
+            return
+
+        # Multiple per-device coordinators share one account login. Without
+        # this lock, several of them can notice the token is near expiry on
+        # the same poll tick and each fire off a full Cognito re-login
+        # concurrently — which can desync the cloud-side device presence
+        # session for whichever one loses the race (seen as a device stuck
+        # reporting cloud_connectivity=off while others recover normally).
+        async with edata["auth_lock"]:
+            # Re-check: another coordinator may have already refreshed while
+            # we were waiting for the lock.
+            if not self._needs_refresh(edata["auth"]):
+                return
             _LOGGER.debug("Refreshing Maveo AWS credentials")
             new_auth = await self.hass.async_add_executor_job(
                 authenticate, edata["email"], edata["password"], edata["config"]

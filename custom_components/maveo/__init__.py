@@ -1,6 +1,7 @@
 """Maveo Home Assistant integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -52,6 +53,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "devices":           {d.id: d for d in devices},
         "coordinators":      {},
         "guest_coordinators": {},
+        # Serializes auth refreshes across all per-device coordinators sharing
+        # this account, so concurrent expiry checks don't each trigger their
+        # own full Cognito re-login (see _refresh_auth_if_needed).
+        "auth_lock":         asyncio.Lock(),
     }
 
     for device in devices:
