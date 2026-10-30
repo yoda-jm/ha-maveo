@@ -20,3 +20,4 @@ GUEST_POLL_INTERVAL = 60
 # Service names
 SERVICE_CREATE_GUEST = "create_guest"
 SERVICE_REMOVE_GUEST = "remove_guest"
+SERVICE_VENTILATE = "ventilate"

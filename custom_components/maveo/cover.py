@@ -37,7 +37,11 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
     """Maveo garage door."""
 
     _attr_device_class = CoverDeviceClass.GARAGE
-    _attr_supported_features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN
+        | CoverEntityFeature.CLOSE
+        | CoverEntityFeature.STOP
+    )
     _attr_has_entity_name = True
     _attr_translation_key = "garage_door"
 
@@ -86,3 +90,7 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
 
     async def async_close_cover(self, **kwargs) -> None:
         await self.coordinator.async_send_command(Command.GARAGE_CLOSE)
+
+    async def async_stop_cover(self, **kwargs) -> None:
+        """Stop the garage door."""
+        await self.coordinator.async_send_command(Command.GARAGE_STOP)
