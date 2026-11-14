@@ -28,3 +28,10 @@ remove_guest:
       required: true
       selector:
         text:
+
+ventilate:
+  fields:
+    device_id:
+      required: false
+      selector:
+        text:

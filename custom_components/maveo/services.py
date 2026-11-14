@@ -6,9 +6,17 @@ import logging
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.exceptions import HomeAssistantError
 
 from .client import RIGHTS_ADMIN, RIGHTS_RESTRICTED
-from .const import DOMAIN, SERVICE_CREATE_GUEST, SERVICE_REMOVE_GUEST
+from .const import (
+    DOMAIN,
+    SERVICE_CREATE_GUEST,
+    SERVICE_REMOVE_GUEST,
+    SERVICE_VENTILATE,
+)
+
+from .iot import Command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +37,12 @@ _REMOVE_SCHEMA = vol.Schema(
     }
 )
 
+_VENTILATE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("device_id"): cv.string,
+    }
+)
+
 
 def _find_entry_data(hass: HomeAssistant, device_id: str) -> dict | None:
     for entry_id, data in hass.data.get(DOMAIN, {}).items():
@@ -40,8 +54,56 @@ def _find_entry_data(hass: HomeAssistant, device_id: str) -> dict | None:
 def async_register_services(hass: HomeAssistant) -> None:
     """Register Maveo services (idempotent — safe to call on each entry setup)."""
 
-    if hass.services.has_service(DOMAIN, SERVICE_CREATE_GUEST):
+    if (
+        hass.services.has_service(DOMAIN, SERVICE_CREATE_GUEST)
+        or hass.services.has_service(DOMAIN, SERVICE_VENTILATE)
+    ):
         return
+    
+    async def _ventilate(call: ServiceCall) -> None:
+        device_id = call.data.get("device_id")
+
+        coordinators = {}
+        for entry_data in hass.data.get(DOMAIN, {}).values():
+            coordinators.update(entry_data.get("coordinators", {}))
+
+        if not coordinators:
+            raise HomeAssistantError(
+                "Keine Maveo-Geräte verfügbar. "
+                "Bitte prüfen, ob die Integration vollständig geladen ist."
+            )
+
+        if not device_id:
+            if len(coordinators) != 1:
+                raise HomeAssistantError(
+                    "Mehrere Maveo-Geräte gefunden. Bitte device_id angeben. "
+                    f"Verfügbare IDs: {', '.join(coordinators)}"
+                )
+
+            device_id = next(iter(coordinators))
+
+        coordinator = coordinators.get(device_id)
+        if coordinator is None:
+            raise HomeAssistantError(
+                f"Maveo-Gerät '{device_id}' nicht gefunden. "
+                f"Verfügbare IDs: {', '.join(coordinators)}"
+            )
+
+        _LOGGER.info(
+            "ventilate: sende Lüftungsbefehl an Maveo-Gerät %s",
+            device_id,
+        )
+
+        await coordinator.async_send_command(Command.GARAGE_VENTILATE)
+
+        _LOGGER.info(
+            "ventilate: Befehlsaufruf für Maveo-Gerät %s abgeschlossen",
+            device_id,
+        )
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_VENTILATE, _ventilate, schema=_VENTILATE_SCHEMA
+    )
 
     async def _create_guest(call: ServiceCall) -> None:
         device_id = call.data["device_id"]
