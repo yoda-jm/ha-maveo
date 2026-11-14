@@ -368,7 +368,7 @@ available in `docs/`.
 ## Development / CLI
 
 ```bash
-git clone [https://github.com/nilbaer/ha-maveo.git](https://github.com/nilbaer/ha-maveo.git)
+git clone https://github.com/nilbaer/ha-maveo.git
 cd ha-maveo
 
 python -m venv .venv
