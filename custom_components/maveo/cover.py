@@ -16,6 +16,8 @@ from .coordinator import MaveoDeviceCoordinator
 from .iot import (
     DOOR_CLOSED,
     DOOR_CLOSING,
+    DOOR_INTERMEDIATE_CLOSED,
+    DOOR_INTERMEDIATE_OPEN,
     DOOR_OPENING,
     DOOR_POSITION_NAMES,
     DOOR_STOPPED,
@@ -62,6 +64,16 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
         )
 
     @property
+    def assumed_state(self) -> bool:
+        """Allow both directions when stopped between the end positions."""
+        pos = (self.coordinator.data or {}).get("door_position")
+        return pos in (
+            DOOR_STOPPED,
+            DOOR_INTERMEDIATE_OPEN,
+            DOOR_INTERMEDIATE_CLOSED,
+        )
+        
+    @property
     def is_closed(self) -> bool | None:
         pos = (self.coordinator.data or {}).get("door_position")
         if pos is None or pos == DOOR_STOPPED:
@@ -79,10 +91,32 @@ class MaveoGarageDoor(CoordinatorEntity[MaveoDeviceCoordinator], CoverEntity):
     @property
     def extra_state_attributes(self) -> dict:
         data = self.coordinator.data or {}
-        attrs = {"position_name": DOOR_POSITION_NAMES.get(data.get("door_position"), "unknown")}
+        position_name = DOOR_POSITION_NAMES.get(
+            data.get("door_position"), "unknown"
+        )
+
+        position_labels = {
+            "Closed": "Geschlossen",
+            "Open": "Vollständig geöffnet",
+            "Opening": "Öffnet",
+            "Closing": "Schließt",
+            "Stopped": "Gestoppt",
+            "IntermediateClosed": "Lüftungsposition",
+            "IntermediateOpen": "Obere Zwischenposition",
+            "unknown": "Unbekannt",
+        }
+
+        attrs = {
+            "position_name": position_name,
+            "position_display": position_labels.get(
+                position_name, "Unbekannt"
+            ),
+        }
+
         if data.get("ime_open") is not None:
-            attrs["intermediate_open_configured"]  = data["ime_open"]
+            attrs["intermediate_open_configured"] = data["ime_open"]
             attrs["intermediate_close_configured"] = data["ime_close"]
+
         return attrs
 
     async def async_open_cover(self, **kwargs) -> None:
