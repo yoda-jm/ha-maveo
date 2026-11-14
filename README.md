@@ -12,8 +12,9 @@ Control your Marantec Maveo Connect garage door stick from Home Assistant.
 This fork is based on the original
 [yoda-jm/ha-maveo](https://github.com/yoda-jm/ha-maveo) project.
 
-It adds a Home Assistant action for the programmed lower ventilation position
-and includes tested cover stop support.
+It adds a Home Assistant action for the programmed lower ventilation
+position, includes tested cover stop support, improves controls in
+intermediate positions and provides readable dashboard position labels.
 
 ### Lower ventilation position
 
@@ -38,6 +39,32 @@ The stop action uses the existing `Command.GARAGE_STOP` command and makes
 the Stop control available to compatible Home Assistant cover controls,
 including the tile card's `cover-open-close` feature.
 
+### Controls in intermediate positions
+
+Previously, the standard cover controls could disable the Open button
+while the door was in the ventilation position, requiring the door to be
+closed before it could be opened fully.
+
+This fork returns `assumed_state: true` for the two reported intermediate
+positions and for a stop between the endpoints. This keeps both opening
+and closing available without introducing estimated percentage positions.
+
+This is a frontend workaround: the discrete intermediate position is
+known, but the integration does not provide a percentage position.
+
+The existing position attributes and movement commands remain unchanged.
+
+### Readable dashboard status
+
+The additional `position_display` attribute provides readable position
+labels, including “Lüftungsposition” instead of the generic “open” state.
+
+The labels are currently in German and do not follow the user's
+Home Assistant language.
+
+The existing `position_name` attribute remains unchanged and should be used
+for templates and automations.
+
 ### Tested functionality
 
 The following has been tested successfully on my installation:
@@ -47,9 +74,21 @@ The following has been tested successfully on my installation:
 - In that position, the cover reports
   `position_name: IntermediateClosed`.
 - The cover Stop button stops the moving garage door.
+- The door can be opened fully directly from the lower ventilation position,
+  without closing it first.
+- A tile card using `state_content: position_display` displays
+  “Lüftungsposition” when the lower ventilation position is reported.
+- The upper intermediate position can be reached using the wall button
+  and is reported as `IntermediateOpen`.
+
+Direct opening from the upper intermediate position and from an arbitrary
+mid-travel stop has not yet been tested with the new control behavior.
 
 Multi-device operation and compatibility with other opener models or
 firmware versions have not yet been verified.
+
+No separate action for driving to the upper intermediate position is
+implemented.
 
 The original project remains the upstream source. These additions do not
 imply endorsement by the original author or Marantec.
@@ -60,7 +99,9 @@ imply endorsement by the original author or Marantec.
 |---|---|
 | Cover — Garage door | Open, close and stop; reported door position and movement state |
 | Action — Ventilate | Move to the programmed lower ventilation position |
-| Cover attribute — Position | `position_name`, including `IntermediateClosed` for the lower ventilation position |
+| Cover attribute — Position | `position_name`, including `IntermediateClosed` and `IntermediateOpen` |
+| Cover attribute — Display position | `position_display` with readable German position labels |
+| Intermediate-position controls | Both directions available when an intermediate position or mid-travel stop is reported |
 | Light — Garage light | Turn on/off, live state |
 | Binary sensor — Connectivity | Cloud connection status |
 | Sensor — Firmware | Stick firmware version |
@@ -74,9 +115,15 @@ imply endorsement by the original author or Marantec.
 Guest entities are created and removed automatically as guest keys are added
 or revoked.
 
-## Installation via HACS
+## Installation
 
-To install this fork:
+Repository for this fork:
+
+https://github.com/nilbaer/ha-maveo
+
+### Installation via HACS
+
+For installations using the standalone HACS interface:
 
 1. In HACS, open the three-dot menu and select Custom repositories.
 2. Add `https://github.com/nilbaer/ha-maveo`
@@ -84,6 +131,10 @@ To install this fork:
 3. Install Maveo and restart Home Assistant.
 4. Open Settings → Devices & services → Add integration and search for Maveo.
 5. Enter your Maveo email, password and region (EU / US).
+
+If your Home Assistant installation uses Marketplace instead of the
+standalone HACS interface, use the corresponding custom-repository
+installation flow with the same repository URL.
 
 The original upstream repository is available at:
 
@@ -149,6 +200,8 @@ target:
 Replace the example entity ID with your own garage-door cover.
 
 The Stop control is also available in compatible dashboard cover controls.
+Stop support remains enabled while the door is stationary; this fork does
+not implement state-dependent disabling of the Stop button.
 
 ### maveo.create_guest
 
@@ -182,10 +235,11 @@ In the lower ventilation position, it reports:
 
 ```yaml
 position_name: IntermediateClosed
+position_display: Lüftungsposition
 ```
 
-The exact attribute value is `IntermediateClosed`, without a space.
-“Intermediate Closed” is the human-readable name.
+The exact attribute value used for detection is `IntermediateClosed`,
+without a space. “Intermediate Closed” is the human-readable name.
 
 ### Template check
 
@@ -219,21 +273,69 @@ to that section instead of creating a second top-level `template:` key.
 The sensor reflects the reported position rather than remembering the last
 ventilation command. It becomes inactive when a different position is reported.
 
-The position attribute is an existing integration feature; this fork makes
-use of it rather than introducing a new position-reporting mechanism.
+The `position_name` attribute is an existing integration feature; this fork
+makes use of it rather than introducing a new position-reporting mechanism.
 
-## Dashboard example
+### Upper intermediate position
 
-The standard tile card can display Open, Stop and Close controls:
+The upper intermediate position is reported as:
+
+```yaml
+position_name: IntermediateOpen
+position_display: Obere Zwischenposition
+```
+
+It can be detected using:
+
+```jinja
+{{ state_attr('cover.garagentor_garage_door', 'position_name') == 'IntermediateOpen' }}
+```
+
+Detection of this position does not imply that it can be selected through
+a dedicated Home Assistant action. A command for directly selecting the
+upper intermediate position has not been identified in this fork.
+
+## Dashboard position display
+
+Use `position_display` for a readable status line in a dashboard card.
+
+| `position_name` | `position_display` |
+|---|---|
+| `Closed` | Geschlossen |
+| `Open` | Vollständig geöffnet |
+| `Opening` | Öffnet |
+| `Closing` | Schließt |
+| `Stopped` | Gestoppt |
+| `IntermediateClosed` | Lüftungsposition |
+| `IntermediateOpen` | Obere Zwischenposition |
+| `unknown` | Unbekannt |
+
+These labels are currently hard-coded in German.
+
+Use `position_name`, not the display text, for templates and automations.
+The display text is intended for presentation only.
+
+The underlying cover state remains `open` in an intermediate position.
+The additional attribute changes the displayed status text, not the
+meaning of the cover state.
+
+### Tile card example
+
+The standard tile card can display the position label above its Open,
+Stop and Close controls:
 
 ```yaml
 type: tile
 entity: cover.garagentor_garage_door
+name: Garagentor
+state_content: position_display
 vertical: false
 features:
   - type: cover-open-close
 features_position: bottom
 ```
+
+Replace the entity ID with your own garage-door cover.
 
 The ventilation action can be called separately from a dashboard button,
 script or automation.
@@ -249,6 +351,9 @@ script or automation.
 Position indicators follow the latest status received by the integration.
 They are not an independent physical position sensor.
 
+Movement and position changes caused by a wall button may not appear
+immediately in Home Assistant.
+
 ## Protocol
 
 - Authentication: AWS Cognito `USER_PASSWORD_AUTH` → Identity Pool →
@@ -263,7 +368,7 @@ available in `docs/`.
 ## Development / CLI
 
 ```bash
-git clone [https://github.com/YOUR_GITHUB_USERNAME/ha-maveo](https://github.com/YOUR_GITHUB_USERNAME/ha-maveo)
+git clone [https://github.com/nilbaer/ha-maveo.git](https://github.com/nilbaer/ha-maveo.git)
 cd ha-maveo
 
 python -m venv .venv
@@ -280,7 +385,6 @@ python cli.py bugreport
 python cli.py bugreport <device_id>
 
 python cli.py bugreport --verbose
-python cli.py bugreport --no-redact
 ```
 
 `configure` saves credentials to the OS keychain.
@@ -295,10 +399,17 @@ Run:
 python cli.py bugreport
 ```
 
-Include the output in your GitHub issue.
+Include the output in your GitHub issue after reviewing it for sensitive
+information.
 
 Sensitive fields such as serial number, MAC address, IP address, GPS
 coordinates and session UUID are redacted by default.
+
+The CLI also supports:
+
+```bash
+python cli.py bugreport --no-redact
+```
 
 Use `--no-redact` only if you understand the consequences of sharing those
 values. Always review logs and diagnostic output before publishing them.
@@ -311,7 +422,8 @@ For problems with the additions in this fork, include:
 - Marantec opener model.
 - Whether standard open, close and stop actions work.
 - Whether the ventilation action moves the door.
-- The reported `position_name` value.
+- Whether opening directly from the ventilation position works.
+- The reported `position_name` and `position_display` values.
 - Relevant error messages with sensitive information removed.
 
 ## Credits
@@ -320,7 +432,8 @@ Original project, Python library, CLI and integration:
 [yoda-jm/ha-maveo](https://github.com/yoda-jm/ha-maveo).
 
 This fork adds the lower ventilation-position action, documents the existing
-position feedback and includes tested cover stop support.
+position feedback, includes tested cover stop support, improves controls
+in intermediate positions and adds readable dashboard position labels.
 
 Please retain the original project's LICENSE file and applicable notices.
 
