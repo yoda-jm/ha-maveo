@@ -1,0 +1,169 @@
+"""Fake Maveo cloud services used at the network boundary.
+
+- Cognito (user pool + identity pool) runs in moto.
+- The REST admin API is a local HTTP server (pytest-httpserver).
+- The garage stick is a fake WebSocket connection that speaks MQTT.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+import boto3
+from werkzeug import Request, Response
+
+from custom_components.maveo import iot
+
+AWS_REGION = "eu-central-1"
+EMAIL = "owner@example.com"
+PASSWORD = "Correct-horse-1"
+DEVICE_ID = "1001"
+DEVICE_NAME = "Garage"
+
+
+@dataclass(frozen=True)
+class CognitoPool:
+    user_pool_id: str
+    client_id: str
+    identity_pool_id: str
+
+
+def create_cognito_pool() -> CognitoPool:
+    """Create a moto user pool, app client, user and identity pool."""
+    idp = boto3.client("cognito-idp", region_name=AWS_REGION)
+    pool_id = idp.create_user_pool(PoolName="maveo")["UserPool"]["Id"]
+    client_id = idp.create_user_pool_client(
+        UserPoolId=pool_id,
+        ClientName="maveo-app",
+        ExplicitAuthFlows=["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
+    )["UserPoolClient"]["ClientId"]
+    idp.admin_create_user(UserPoolId=pool_id, Username=EMAIL, MessageAction="SUPPRESS")
+    idp.admin_set_user_password(
+        UserPoolId=pool_id, Username=EMAIL, Password=PASSWORD, Permanent=True
+    )
+    identity = boto3.client("cognito-identity", region_name=AWS_REGION)
+    identity_pool_id = identity.create_identity_pool(
+        IdentityPoolName="maveo",
+        AllowUnauthenticatedIdentities=False,
+        CognitoIdentityProviders=[
+            {
+                "ProviderName": f"cognito-idp.{AWS_REGION}.amazonaws.com/{pool_id}",
+                "ClientId": client_id,
+            }
+        ],
+    )["IdentityPoolId"]
+    return CognitoPool(pool_id, client_id, identity_pool_id)
+
+
+@dataclass
+class FakeMaveoApi:
+    """In-memory state behind the fake REST admin endpoint."""
+
+    guests: list[dict[str, str]] = field(default_factory=list)
+    requests: list[dict[str, Any]] = field(default_factory=list)
+    authorizations: list[str] = field(default_factory=list)
+    fail_with: int | None = None
+    next_guest: int = 0
+
+    def handle(self, request: Request) -> Response:
+        payload: dict[str, Any] = request.get_json()
+        self.requests.append(payload)
+        self.authorizations.append(request.headers.get("Authorization", ""))
+        if self.fail_with is not None:
+            return Response("secret-guest-token-in-error-body", status=self.fail_with)
+        command = payload["command"]
+        if command == "list_device":
+            return _json([{"id": DEVICE_ID, "name": DEVICE_NAME, "devicetype": 1}])
+        if command == "list_user":
+            return _json(self.guests)
+        if command == "add_user":
+            self.next_guest += 1
+            guest = {
+                "userid": f"guest-{self.next_guest:04d}-0000-0000-000000000000",
+                "token": f"token{self.next_guest:04d}",
+                "rights": str(payload["rights"]),
+                "ttl": "4102444800",
+                "nametag1": "",
+                "nametag2": "",
+                "nametag3": "",
+            }
+            self.guests.append(guest)
+            return _json(guest, status=201)
+        if command == "remove_user":
+            self.guests = [g for g in self.guests if g["userid"] != payload["userid"]]
+            return _json({})
+        return Response("unknown command", status=400)
+
+    def commands(self) -> list[str]:
+        return [r["command"] for r in self.requests]
+
+
+def _json(body: object, status: int = 200) -> Response:
+    return Response(json.dumps(body), status=status, mimetype="application/json")
+
+
+# Replies of a Connect stick (no H+T sensor) to the coordinator's read commands.
+STICK_REPLIES: dict[str, dict[str, Any]] = {
+    "AtoS_s": {"StoA_s": 4},
+    "AtoS_v": {"StoA_v": "1.2.0"},
+    "AtoS_l_r": {"StoA_l_r": 1},
+    "AtoS_get_serial": {"StoA_serial": "SN0001"},
+    "AtoS_name_r": {"StoA_name_r": DEVICE_NAME},
+    "AtoS_ttc_r": {"StoA_ttc_r": 5},
+    "AtoS_buzzer_r": {"StoA_buzzer_r": 0},
+    "AtoS_gps_req": {"StoA_gps": 0, "lat": 51.5, "lng": -0.12},
+    "AtoS_wifi_ap": {"ssid": "home", "ip": "192.168.0.50", "mac": "aa:bb", "rssi": -61},
+    "AtoS_req_ime_learn": {"StoA_ime_learn": 0, "open": 1, "close": 0},
+    "AtoS_sensor": {"StoA_sensor": 0, "command": 0, "error": 2},
+    "AtoS_weather": {"StoA_weather": 0, "temperature": 1234, "humidity": 5600},
+}
+
+
+class FakeStick:
+    """A garage stick reachable over MQTT-over-WebSocket."""
+
+    def __init__(self) -> None:
+        self.replies = dict(STICK_REPLIES)
+        self.commands: list[dict[str, Any]] = []
+        self.connect_headers: list[dict[str, str]] = []
+
+    async def connect(self, uri: str, **kwargs: Any) -> FakeConnection:
+        self.connect_headers.append(dict(kwargs["additional_headers"]))
+        return FakeConnection(self)
+
+
+class FakeConnection:
+    """One WebSocket connection to the fake stick."""
+
+    def __init__(self, stick: FakeStick) -> None:
+        self._stick = stick
+        self._inbox: asyncio.Queue[bytes] = asyncio.Queue()
+        self._device_id = ""
+
+    async def send(self, data: bytes) -> None:
+        packet_type = data[0] >> 4
+        if packet_type == 1:  # CONNECT
+            self._inbox.put_nowait(b"\x20\x02\x00\x00")
+        elif packet_type == 8:  # SUBSCRIBE
+            self._inbox.put_nowait(b"\x90\x03\x00\x01\x00")
+        elif packet_type == 3:  # PUBLISH
+            packet = iot._parse_mqtt_packet(data)
+            device_id = packet["topic"].split("/")[0]
+            command: dict[str, Any] = packet["json"]
+            self._stick.commands.append(command)
+            for key, reply in self._stick.replies.items():
+                if key in command:
+                    body = json.dumps(reply).encode()
+                    self._inbox.put_nowait(
+                        iot._mqtt_publish_packet(f"{device_id}/rsp", body)
+                    )
+                    break
+
+    async def recv(self) -> bytes:
+        return await self._inbox.get()
+
+    async def close(self) -> None:
+        return None
