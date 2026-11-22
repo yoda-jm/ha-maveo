@@ -1,76 +1,70 @@
 """Maveo Home Assistant integration."""
+
 from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
-from .auth import authenticate, AuthError
-from .client import MaveoClient, APIError
+from .auth import AuthError, CloudError
+from .client import APIError
 from .config import Region, get_config
-from .const import DOMAIN, PLATFORMS
+from .const import CONF_REGION, DOMAIN, PLATFORMS
 from .coordinator import MaveoDeviceCoordinator
+from .data import MaveoConfigEntry, MaveoData
 from .guest_coordinator import MaveoGuestCoordinator
 from .services import async_register_services
+from .session import MaveoSession
 
 _LOGGER = logging.getLogger(__name__)
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Maveo from a config entry."""
-    email = entry.data["email"]
-    password = entry.data["password"]
-    region = Region(entry.data.get("region", "EU"))
-    config = get_config(region)
 
-    try:
-        auth = await hass.async_add_executor_job(
-            authenticate, email, password, config
-        )
-    except AuthError as err:
-        raise ConfigEntryNotReady(f"Authentication failed: {err}") from err
-
-    client = MaveoClient(auth, config)
-
-    try:
-        devices = await hass.async_add_executor_job(client.list_devices)
-    except APIError as err:
-        raise ConfigEntryNotReady(f"Failed to list devices: {err}") from err
-
-    if not devices:
-        _LOGGER.warning("No Maveo devices found for account %s", email)
-
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
-        "auth":              auth,
-        "email":             email,
-        "password":          password,
-        "config":            config,
-        "client":            client,
-        "devices":           {d.id: d for d in devices},
-        "coordinators":      {},
-        "guest_coordinators": {},
-    }
-
-    for device in devices:
-        coord = MaveoDeviceCoordinator(hass, entry, device.id)
-        await coord.async_config_entry_first_refresh()
-        hass.data[DOMAIN][entry.entry_id]["coordinators"][device.id] = coord
-
-        guest_coord = MaveoGuestCoordinator(hass, entry, device.id)
-        await guest_coord.async_config_entry_first_refresh()
-        hass.data[DOMAIN][entry.entry_id]["guest_coordinators"][device.id] = guest_coord
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the Maveo services."""
     async_register_services(hass)
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> bool:
+    """Set up Maveo from a config entry."""
+    config = get_config(Region(entry.data.get(CONF_REGION, Region.EU)))
+    session = MaveoSession(hass, entry, config)
+
+    try:
+        await session.async_ensure_valid()
+    except AuthError as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
+    except CloudError as err:
+        raise ConfigEntryNotReady(str(err)) from err
+
+    try:
+        devices = await hass.async_add_executor_job(session.client.list_devices)
+    except APIError as err:
+        raise ConfigEntryNotReady(f"Failed to list devices: {err}") from err
+
+    if not devices:
+        _LOGGER.warning("No Maveo devices found for %s", entry.title)
+
+    data = MaveoData(session=session, devices={d.id: d for d in devices})
+    for device in devices:
+        coord = MaveoDeviceCoordinator(hass, entry, session, device.id)
+        await coord.async_config_entry_first_refresh()
+        data.coordinators[device.id] = coord
+
+        guest_coord = MaveoGuestCoordinator(hass, entry, session, device.id)
+        await guest_coord.async_config_entry_first_refresh()
+        data.guest_coordinators[device.id] = guest_coord
+
+    entry.runtime_data = data
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

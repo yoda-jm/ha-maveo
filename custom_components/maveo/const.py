@@ -1,16 +1,18 @@
 """Constants for the Maveo integration."""
 
+from homeassistant.const import Platform
+
 DOMAIN = "maveo"
 
 CONF_REGION = "region"
+CONF_REFRESH_TOKEN = "refresh_token"
 
 PLATFORMS = [
-    "cover",
-    "light",
-    "binary_sensor",
-    "sensor",
-    "device_tracker",
-    "camera",
+    Platform.COVER,
+    Platform.LIGHT,
+    Platform.BINARY_SENSOR,
+    Platform.SENSOR,
+    Platform.DEVICE_TRACKER,
 ]
 
 # Poll intervals (seconds)

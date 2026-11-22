@@ -177,9 +177,6 @@ Door position codes (`StoA_s`):
 | 5 | IntermediateOpen *(from binary, not observed in practice)* |
 | 6 | IntermediateClosed *(from binary, not observed in practice)* |
 
-CLI shortcut: `python cli.py info <device_id>` — fetches all read commands and
-displays them formatted.
-
 ---
 
 ## Flow 4 — Check device online status
@@ -210,10 +207,7 @@ POST /admin
 {"deviceid": "<device_id>", "command": "add_user", "ttl": <seconds>, "rights": 0}
 → HTTP 201  {"userid": "<uuid>", "token": "<64 hex>", "rights": "0", "ttl": "..."}
 
-# Share — generate encrypted deep link
-python cli.py share-guest <device_id> <user_id>                          # name + GPS fetched from device
-python cli.py share-guest <device_id> <user_id> --name "My Garage"      # override name, GPS still auto
-python cli.py share-guest <device_id> <user_id> --name G --latitude X --longitude Y  # fully manual
+# Share — encrypted deep link (MaveoClient.generate_guest_link)
 → https://deeplink.marantec-cloud.de?data=<encrypted>
 
 # Revoke
@@ -229,25 +223,6 @@ Guest tokens can be promoted to full IoT access via a 3-step exchange:
 (returns same `identity_id` as owner — guest and owner share the same IoT permissions).
 
 See `guest-flow.md` for the full sequence.
-
----
-
-## Flow 6 — MaveoPro customer profile
-
-**Input:** IdToken
-**Output:** customer profile, registered device serial numbers
-
-```
-GET https://maveoproadmin-test.azurewebsites.net/api/free-customers/<email>
-Authorization: Bearer <IdToken>
-x-api-key:    QJykAohmC8TA7KG46yFsaz2i     ← hardcoded in binary
-x-client-id:  maveoapp                       ← hardcoded in binary (not the Cognito client ID)
-
-→ {"payload": {"fullName": "...", "email": "...", "devices": [...]}}
-```
-
-Note: the response contains the device serial number and type but **not** a Nymea
-`serverUuid`.  The Nymea remote proxy path remains blocked (see investigations.md).
 
 ---
 
@@ -271,6 +246,6 @@ All constants extracted from `libmaveo-app_armeabi-v7a.so` (app 2.6.0).
 | Token | Lifetime | Refresh |
 |---|---|---|
 | Cognito IdToken | 1 hour | Use RefreshToken with `REFRESH_TOKEN_AUTH` |
-| Cognito RefreshToken | ~30 days | Re-authenticate with password |
+| Cognito RefreshToken | not verified (Cognito default is 30 days) | Sign in again with the stored password |
 | AWS temp credentials | ~1 hour | Re-run `GetCredentialsForIdentity` with fresh IdToken |
 | Guest token (hex) | set by owner (`ttl` seconds) | `refresh_token` command consumes and rotates it |

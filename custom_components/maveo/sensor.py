@@ -1,8 +1,10 @@
 """Maveo sensor entities — device sensors and dynamic guest sensors."""
+
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -11,21 +13,21 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .client import GuestUser
-from .const import DOMAIN
+from .client import Device, GuestUser
 from .coordinator import MaveoDeviceCoordinator
+from .data import MaveoConfigEntry
+from .entity import maveo_device_info
 from .guest_coordinator import MaveoGuestCoordinator
-
 
 # ---------------------------------------------------------------------------
 # Device sensors
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class MaveoSensorDescription(SensorEntityDescription):
@@ -132,30 +134,34 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    entry: MaveoConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
-    edata = hass.data[DOMAIN][entry.entry_id]
+    edata = entry.runtime_data
 
     # Static device sensors
     entities: list[SensorEntity] = []
-    for device_id, coord in edata["coordinators"].items():
-        device = edata["devices"][device_id]
+    for device_id, coord in edata.coordinators.items():
+        device = edata.devices[device_id]
         for desc in DEVICE_SENSORS:
             entities.append(MaveoDeviceSensor(coord, device, desc))
     async_add_entities(entities)
 
     # Dynamic guest sensors — one per guest, created as they appear
-    for device_id, guest_coord in edata["guest_coordinators"].items():
-        device = edata["devices"][device_id]
-        _setup_guest_sensor_tracking(hass, entry, guest_coord, device_id, device, async_add_entities)
+    for device_id, guest_coord in edata.guest_coordinators.items():
+        device = edata.devices[device_id]
+        _setup_guest_sensor_tracking(
+            hass, entry, guest_coord, device_id, device, async_add_entities
+        )
 
 
 def _setup_guest_sensor_tracking(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MaveoConfigEntry,
     guest_coord: MaveoGuestCoordinator,
     device_id: str,
-    device,
+    device: Device,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     tracked: set[str] = set()
@@ -181,6 +187,7 @@ def _setup_guest_sensor_tracking(
 # Device sensor entity
 # ---------------------------------------------------------------------------
 
+
 class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity):
     """A single device diagnostic sensor."""
 
@@ -190,18 +197,13 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
     def __init__(
         self,
         coordinator: MaveoDeviceCoordinator,
-        device,
+        device: Device,
         description: MaveoSensorDescription,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.device_id}_{description.key}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, coordinator.device_id)},
-            "name": device.name,
-            "manufacturer": "Marantec",
-            "model": "Maveo",
-        }
+        self._attr_device_info = maveo_device_info(coordinator.device_id, device.name)
 
     @property
     def available(self) -> bool:
@@ -250,14 +252,14 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
         if self.entity_description.key == "ht_sensor":
             attrs = {}
             for src_key, attr_name in (
-                ("ht_temperature",  "temperature"),
-                ("ht_humidity",     "humidity"),
-                ("ht_battery",      "battery"),
-                ("ht_last_update",  "last_update"),
-                ("ht_name",         "name"),
+                ("ht_temperature", "temperature"),
+                ("ht_humidity", "humidity"),
+                ("ht_battery", "battery"),
+                ("ht_last_update", "last_update"),
+                ("ht_name", "name"),
                 ("ht_manufacturer", "manufacturer"),
-                ("ht_model",        "model"),
-                ("ht_serial",       "serial"),
+                ("ht_model", "model"),
+                ("ht_serial", "serial"),
                 ("ht_firmware_rev", "firmware_rev"),
                 ("ht_software_rev", "software_rev"),
                 ("ht_hardware_rev", "hardware_rev"),
@@ -273,6 +275,7 @@ class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity)
 # Guest sensor entity
 # ---------------------------------------------------------------------------
 
+
 class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
     """Sensor entity for a single guest key — shows TTL and metadata."""
 
@@ -284,18 +287,13 @@ class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
         coordinator: MaveoGuestCoordinator,
         user_id: str,
         device_id: str,
-        device,
+        device: Device,
     ) -> None:
         super().__init__(coordinator)
         self.user_id = user_id
         self._device_id = device_id
         self._attr_unique_id = f"{device_id}_guest_{user_id}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, device_id)},
-            "name": device.name,
-            "manufacturer": "Marantec",
-            "model": "Maveo",
-        }
+        self._attr_device_info = maveo_device_info(device_id, device.name)
 
     def _get_guest(self) -> GuestUser | None:
         return next(
@@ -347,8 +345,7 @@ class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
         if guest.nametag3:
             attrs["locale"] = guest.nametag3
         if guest.ttl.isdigit():
-            import datetime
-            attrs["expires_at"] = datetime.datetime.fromtimestamp(
-                int(guest.ttl), tz=datetime.timezone.utc
+            attrs["expires_at"] = datetime.fromtimestamp(
+                int(guest.ttl), tz=UTC
             ).isoformat()
         return attrs

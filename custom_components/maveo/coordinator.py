@@ -1,116 +1,102 @@
 """Device state coordinator — MQTT burst-poll every 30 s."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .auth import authenticate, AuthResult
-from .client import MaveoClient
-from .const import DOMAIN, DEVICE_POLL_INTERVAL
+from .auth import AuthError, CloudError
+from .const import DEVICE_POLL_INTERVAL
 from .iot import Command, MaveoIoTClient
+from .session import MaveoSession
 
 _LOGGER = logging.getLogger(__name__)
 
 _READ_COMMANDS = [
-    ("door_position", Command.STATUS,      "StoA_s"),
-    ("firmware",      Command.VERSION,     "StoA_v"),
-    ("light_on",      Command.LIGHT_READ,  "StoA_l_r"),
-    ("serial",        Command.SERIAL,      "StoA_serial"),
-    ("device_name",   Command.NAME_READ,   "StoA_name_r"),
-    ("ttc_minutes",   Command.TTC_READ,    "StoA_ttc_r"),
-    ("buzzer_on",     Command.BUZZER_READ, "StoA_buzzer_r"),
-    ("gps",           Command.GPS_READ,      None),
-    ("wifi",          Command.WIFI_READ,     None),
-    ("ime",           Command.IME_LEARN_READ, None),
+    ("door_position", Command.STATUS, "StoA_s"),
+    ("firmware", Command.VERSION, "StoA_v"),
+    ("light_on", Command.LIGHT_READ, "StoA_l_r"),
+    ("serial", Command.SERIAL, "StoA_serial"),
+    ("device_name", Command.NAME_READ, "StoA_name_r"),
+    ("ttc_minutes", Command.TTC_READ, "StoA_ttc_r"),
+    ("buzzer_on", Command.BUZZER_READ, "StoA_buzzer_r"),
+    ("gps", Command.GPS_READ, None),
+    ("wifi", Command.WIFI_READ, None),
+    ("ime", Command.IME_LEARN_READ, None),
 ]
 
 _EMPTY: dict[str, Any] = {
-    "online":              False,
-    "is_bluefi":           None,
-    "door_position":       None,
-    "light_on":            None,
-    "firmware":            None,
-    "serial":              None,
-    "device_name":         None,
-    "ttc_minutes":         None,
-    "buzzer_on":           None,
-    "gps_lat":             None,
-    "gps_lng":             None,
-    "has_gps":             False,
-    "wifi_ssid":           None,
-    "wifi_ip":             None,
-    "wifi_mac":            None,
-    "wifi_rssi":           None,
-    "ime_open":            None,
-    "ime_close":           None,
-    "ht_sensor_paired":    None,
-    "ht_temperature":      None,
-    "ht_humidity":         None,
-    "ht_battery":          None,
-    "ht_name":             None,
-    "ht_manufacturer":     None,
-    "ht_model":            None,
-    "ht_serial":           None,
-    "ht_firmware_rev":     None,
-    "ht_software_rev":     None,
-    "ht_hardware_rev":     None,
-    "ht_last_update":      None,
+    "online": False,
+    "is_bluefi": None,
+    "door_position": None,
+    "light_on": None,
+    "firmware": None,
+    "serial": None,
+    "device_name": None,
+    "ttc_minutes": None,
+    "buzzer_on": None,
+    "gps_lat": None,
+    "gps_lng": None,
+    "has_gps": False,
+    "wifi_ssid": None,
+    "wifi_ip": None,
+    "wifi_mac": None,
+    "wifi_rssi": None,
+    "ime_open": None,
+    "ime_close": None,
+    "ht_sensor_paired": None,
+    "ht_temperature": None,
+    "ht_humidity": None,
+    "ht_battery": None,
+    "ht_name": None,
+    "ht_manufacturer": None,
+    "ht_model": None,
+    "ht_serial": None,
+    "ht_firmware_rev": None,
+    "ht_software_rev": None,
+    "ht_hardware_rev": None,
+    "ht_last_update": None,
     "weather_temperature": None,
-    "weather_humidity":    None,
+    "weather_humidity": None,
 }
 
 
 class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for a single Maveo device — MQTT burst-poll."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, device_id: str) -> None:
+    config_entry: ConfigEntry
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        session: MaveoSession,
+        device_id: str,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"Maveo device {device_id}",
             update_interval=timedelta(seconds=DEVICE_POLL_INTERVAL),
         )
-        self._entry = entry
+        self._session = session
         self.device_id = device_id
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _edata(self) -> dict:
-        return self.hass.data[DOMAIN][self._entry.entry_id]
-
-    async def _refresh_auth_if_needed(self) -> None:
-        auth: AuthResult = self._edata()["auth"]
-        expiry = auth.expiration
-        if not expiry.tzinfo:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        if expiry < datetime.now(timezone.utc) + timedelta(minutes=10):
-            edata = self._edata()
-            _LOGGER.debug("Refreshing Maveo AWS credentials")
-            new_auth = await self.hass.async_add_executor_job(
-                authenticate, edata["email"], edata["password"], edata["config"]
-            )
-            edata["auth"] = new_auth
-            edata["client"] = MaveoClient(new_auth, edata["config"])
-
-    # ------------------------------------------------------------------
-    # DataUpdateCoordinator
-    # ------------------------------------------------------------------
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            await self._refresh_auth_if_needed()
-        except Exception as err:
+            await self._session.async_ensure_valid()
+        except AuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except CloudError as err:
             raise UpdateFailed(f"Auth refresh failed: {err}") from err
-
-        edata = self._edata()
 
         result = dict(_EMPTY)
 
@@ -119,20 +105,18 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # disconnected while it still answers over MQTT. So we don't gate on it;
         # we probe the device directly and treat a real MQTT response as online.
         try:
-            result.update(
-                await self._fetch_mqtt_state(edata["auth"], edata["config"])
-            )
-        except Exception as err:
-            _LOGGER.warning(
-                "MQTT state fetch failed for %s: %s", self.device_id, err
-            )
+            result.update(await self._fetch_mqtt_state())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("MQTT state fetch failed for %s: %s", self.device_id, err)
 
         result["online"] = result.get("door_position") is not None
         return result
 
-    async def _fetch_mqtt_state(self, auth: AuthResult, config) -> dict[str, Any]:
+    async def _fetch_mqtt_state(self) -> dict[str, Any]:
         updates: dict[str, Any] = {}
-        async with MaveoIoTClient(auth, config, self.device_id) as iot:
+        async with MaveoIoTClient(
+            self._session.auth, self._session.config, self.device_id
+        ) as iot:
             await iot.subscribe()
             for key, cmd, response_key in _READ_COMMANDS:
                 await iot.send(cmd)
@@ -140,7 +124,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if key == "door_position":
                     # BlueFi sends a full state dump before StoA_s (which arrives last).
                     # Connect stick sends only StoA_s.
-                    # Detect stick type by whether we receive any non-StoA_s packet first.
+                    # Any packet before StoA_s means a BlueFi stick.
                     is_bluefi = False
                     for _ in range(15):
                         pkt = await iot.receive(timeout=3.0)
@@ -167,12 +151,12 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             updates["has_gps"] = True
                 elif key == "wifi":
                     updates["wifi_ssid"] = d.get("ssid")
-                    updates["wifi_ip"]   = d.get("ip")
-                    updates["wifi_mac"]  = d.get("mac")
+                    updates["wifi_ip"] = d.get("ip")
+                    updates["wifi_mac"] = d.get("mac")
                     updates["wifi_rssi"] = d.get("rssi")
                 elif key == "ime":
                     if "StoA_ime_learn" in d:
-                        updates["ime_open"]  = bool(d.get("open"))
+                        updates["ime_open"] = bool(d.get("open"))
                         updates["ime_close"] = bool(d.get("close"))
                 elif key == "light_on":
                     val = d.get(response_key)
@@ -210,12 +194,20 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 updates["ht_battery"] = d.get("battery_val")
                                 updates["ht_last_update"] = d.get("last_update")
                                 updates["ht_name"] = d.get("name") or None
-                                updates["ht_manufacturer"] = d.get("manufacturer") or None
+                                updates["ht_manufacturer"] = (
+                                    d.get("manufacturer") or None
+                                )
                                 updates["ht_model"] = d.get("model") or None
                                 updates["ht_serial"] = d.get("serial_num") or None
-                                updates["ht_firmware_rev"] = d.get("firmware_rev") or None
-                                updates["ht_software_rev"] = d.get("software_rev") or None
-                                updates["ht_hardware_rev"] = d.get("hardware_rev") or None
+                                updates["ht_firmware_rev"] = (
+                                    d.get("firmware_rev") or None
+                                )
+                                updates["ht_software_rev"] = (
+                                    d.get("software_rev") or None
+                                )
+                                updates["ht_hardware_rev"] = (
+                                    d.get("hardware_rev") or None
+                                )
                                 break
 
             # Outdoor weather — only meaningful with GPS coordinates
@@ -239,17 +231,18 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return updates
 
-    # ------------------------------------------------------------------
-    # Command helper
-    # ------------------------------------------------------------------
-
-    async def async_send_command(self, command: dict) -> None:
+    async def async_send_command(self, command: dict[str, Any]) -> None:
         """Send an IoT command then schedule a coordinator refresh."""
-        edata = self._edata()
-        auth: AuthResult = edata["auth"]
-        config = edata["config"]
-
-        async with MaveoIoTClient(auth, config, self.device_id) as iot:
+        try:
+            await self._session.async_ensure_valid()
+        except AuthError as err:
+            self.config_entry.async_start_reauth(self.hass)
+            raise HomeAssistantError(str(err)) from err
+        except CloudError as err:
+            raise HomeAssistantError(str(err)) from err
+        async with MaveoIoTClient(
+            self._session.auth, self._session.config, self.device_id
+        ) as iot:
             await iot.subscribe()
             await iot.send(command)
             await iot.receive(timeout=1.0)  # drain any immediate response

@@ -12,9 +12,6 @@ native library `libmaveo-app_armeabi-v7a.so`, and live traffic analysis.
 | [rest-api.md](rest-api.md) | All working REST API commands (`/admin` and `/user` endpoints) |
 | [iot-mqtt.md](iot-mqtt.md) | MQTT-over-WebSocket protocol, SigV4 signing, MQTT packet format |
 | [guest-flow.md](guest-flow.md) | Guest user lifecycle: create, authenticate, IoT access |
-| [nymea-proxy.md](nymea-proxy.md) | Nymea remote proxy architecture (partially blocked — low priority) |
-| [investigations.md](investigations.md) | Dead ends, resolved issues, open questions |
-| [uuids.md](uuids.md) | UUID catalog extracted from binary |
 
 ## Status
 
@@ -28,7 +25,6 @@ native library `libmaveo-app_armeabi-v7a.so`, and live traffic analysis.
 | REST: device rename | `set_device_name` |
 | REST: guest CRUD | create / list / edit / remove guest users |
 | REST: guest token exchange | `refresh_token` → `get_advuser_access` → AWS creds |
-| REST: MaveoPro customer profile | `GET /api/free-customers/<email>` with hardcoded API key |
 | IoT: WebSocket connect | SigV4 header auth, service `iotdata` |
 | IoT: MQTT CONNECT | `client_id = device_id` (AWS IoT policy requirement) |
 | IoT: subscribe + publish | topics `{device_id}/rsp` and `{device_id}/cmd` |

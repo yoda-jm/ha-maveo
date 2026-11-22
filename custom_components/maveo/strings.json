@@ -10,42 +10,89 @@
           "region": "Region"
         },
         "data_description": {
-          "region": "EU for Europe, US for North America"
+          "region": "EU for Europe, US for North America",
+          "password": "Stored so Home Assistant can sign in again when the Maveo session expires."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Maveo again",
+        "description": "Maveo rejected the stored password for {email}. Enter the current password.",
+        "data": {
+          "password": "Password"
         }
       }
     },
     "error": {
       "invalid_auth": "Invalid email or password",
-      "cannot_connect": "Cannot connect to Maveo cloud"
+      "cannot_connect": "Cannot connect to Maveo cloud",
+      "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "This account is already configured"
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Signed in again"
     }
   },
   "entity": {
     "sensor": {
-      "firmware": {"name": "Firmware"},
-      "ttc": {"name": "Time to close"},
-      "rssi": {"name": "WiFi signal"},
-      "buzzer": {"name": "Buzzer"}
+      "firmware": {
+        "name": "Firmware"
+      },
+      "ttc": {
+        "name": "Time to close"
+      },
+      "rssi": {
+        "name": "WiFi signal"
+      },
+      "buzzer": {
+        "name": "Buzzer"
+      },
+      "stick_type": {
+        "name": "Stick type"
+      },
+      "ht_sensor": {
+        "name": "Indoor sensor"
+      },
+      "weather_temperature": {
+        "name": "Outdoor temperature"
+      },
+      "weather_humidity": {
+        "name": "Outdoor humidity"
+      },
+      "indoor_temperature": {
+        "name": "Indoor temperature"
+      },
+      "indoor_humidity": {
+        "name": "Indoor humidity"
+      },
+      "indoor_battery": {
+        "name": "Indoor sensor battery"
+      }
     },
     "binary_sensor": {
-      "connectivity": {"name": "Cloud connectivity"}
+      "connectivity": {
+        "name": "Cloud connectivity"
+      }
     },
     "cover": {
-      "garage_door": {"name": "Garage door"}
+      "garage_door": {
+        "name": "Garage door"
+      }
     },
     "light": {
-      "garage_light": {"name": "Light"}
+      "garage_light": {
+        "name": "Light"
+      }
     },
     "device_tracker": {
-      "location": {"name": "Location"}
+      "location": {
+        "name": "Location"
+      }
     }
   },
   "services": {
     "create_guest": {
       "name": "Create guest key",
-      "description": "Create a time-limited guest key for a device and display its QR code.",
+      "description": "Admin only. Create a time-limited guest key for a device and return its share link in the action response.",
       "fields": {
         "device_id": {
           "name": "Device ID",
@@ -63,7 +110,7 @@
     },
     "remove_guest": {
       "name": "Remove guest key",
-      "description": "Revoke a guest key from a device.",
+      "description": "Admin only. Revoke a guest key from a device.",
       "fields": {
         "device_id": {
           "name": "Device ID",

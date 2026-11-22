@@ -1,10 +1,10 @@
 """Maveo regional configuration."""
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class Region(str, Enum):
+class Region(StrEnum):
     EU = "EU"
     US = "US"
 

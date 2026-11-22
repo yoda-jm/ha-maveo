@@ -191,22 +191,10 @@ The geofence (`rights=0`) is enforced only by the app, not the server.
 ### Library usage
 
 ```python
-from maveo import decode_guest_link
-payload = decode_guest_link(url)
-
 # Generate a link (requires a valid GuestUser object):
 link = client.generate_guest_link(guest, device_id, "My Garage",
                                    location_name="Home",
                                    latitude=48.858, longitude=2.294)
-```
-
-### CLI usage
-
-```
-python cli.py decode-link <url>
-python cli.py share-guest <device_id> <user_id>                     # all values auto-fetched from device
-python cli.py share-guest <device_id> <user_id> --name "My Garage"  # override name, GPS still auto
-python cli.py share-guest <device_id> <user_id> --name "My Garage" --location Home --latitude 48.858 --longitude 2.294
 ```
 
 ---
