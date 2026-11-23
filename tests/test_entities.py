@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import add_entry_via_flow
-from .fakes import DEVICE_ID, FakeMaveoApi, FakeStick
+from .fakes import DEVICE_ID, HT_SENSOR_REPLY, FakeMaveoApi, FakeStick
 
 
 def _state(hass: HomeAssistant, platform: str, unique_id: str) -> State:
@@ -184,3 +184,30 @@ async def test_every_entity_has_a_distinct_name(
     assert len(names) == len(entries)
     assert len(names) == len(set(names)), sorted(names)
     assert "Garage" not in names
+
+
+async def test_bluefi_stick_with_indoor_sensor(
+    hass: HomeAssistant, cloud: FakeMaveoApi, stick: FakeStick
+) -> None:
+    stick.bluefi = True
+    stick.ht_sensor = dict(HT_SENSOR_REPLY)
+    await add_entry_via_flow(hass)
+
+    assert _state(hass, "sensor", f"{DEVICE_ID}_indoor_temperature").state == "21.5"
+    assert _state(hass, "sensor", f"{DEVICE_ID}_indoor_humidity").state == "45.2"
+    assert _state(hass, "sensor", f"{DEVICE_ID}_indoor_battery").state == "87"
+    status = _state(hass, "sensor", f"{DEVICE_ID}_ht_sensor")
+    assert status.state == "paired"
+    assert status.attributes["model"] == "HT-1"
+    assert status.attributes["serial"] == "HT0001"
+    assert "software_rev" not in status.attributes
+    assert _state(hass, "cover", f"{DEVICE_ID}_cover").state == "closed"
+
+
+async def test_bluefi_stick_type(
+    hass: HomeAssistant, stick: FakeStick, entry_all_enabled: ConfigEntry
+) -> None:
+    stick.bluefi = True
+    assert await hass.config_entries.async_reload(entry_all_enabled.entry_id)
+    await hass.async_block_till_done()
+    assert _state(hass, "sensor", f"{DEVICE_ID}_stick_type").state == "bluefi"
