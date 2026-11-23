@@ -83,16 +83,16 @@ async def _async_sign_in(
     refresh_token: str | None,
     entry: ConfigEntry,
 ) -> AuthResult:
-    """Use the refresh token, falling back to the stored password."""
-    email: str | None = entry.data.get(CONF_EMAIL)
-    password: str | None = entry.data.get(CONF_PASSWORD)
+    """Use the refresh token, falling back to the stored password.
+
+    Entries made before refresh tokens were stored have none, so they start
+    with the password.
+    """
     if refresh_token:
         try:
             return await refresh(http, refresh_token, config)
         except AuthError:
-            if not (email and password):
-                raise
             _LOGGER.info("Maveo refresh token rejected; signing in with password")
-    if not (email and password):
-        raise AuthError("No stored Maveo credentials")
+    email: str = entry.data[CONF_EMAIL]
+    password: str = entry.data[CONF_PASSWORD]
     return await login(http, email, password, config)
