@@ -6,7 +6,6 @@ import base64
 from datetime import timedelta
 from urllib.parse import parse_qs
 
-import boto3
 import pytest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -21,9 +20,9 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from custom_components.maveo.client import GuestUser
+from custom_components.maveo.api import GuestUser
 
-from .fakes import AWS_REGION, DEVICE_ID, EMAIL, PASSWORD, CognitoPool, FakeMaveoApi
+from .fakes import DEVICE_ID, EMAIL, PASSWORD, CognitoPool, FakeMaveoApi
 
 _KEY = base64.b64decode("zbH/cSqJIcgIta9NEhfJ8GSuT79dTQNDB2AcPBfLxyo=")
 
@@ -56,7 +55,7 @@ async def test_rejected_refresh_token_signs_in_with_stored_password(
 
 def _sign_out_everywhere(cognito: CognitoPool, new_password: str | None = None) -> None:
     """Revoke all refresh tokens, optionally after changing the password."""
-    idp = boto3.client("cognito-idp", region_name=AWS_REGION)
+    idp = cognito.idp()
     if new_password is not None:
         idp.admin_set_user_password(
             UserPoolId=cognito.user_pool_id,
@@ -100,7 +99,7 @@ async def test_changed_password_starts_reauth(
     hass: HomeAssistant, entry: ConfigEntry, cognito: CognitoPool
 ) -> None:
     new_password = "Changed-password-2"
-    boto3.client("cognito-idp", region_name=AWS_REGION).admin_set_user_password(
+    cognito.idp().admin_set_user_password(
         UserPoolId=cognito.user_pool_id,
         Username=EMAIL,
         Password=new_password,
@@ -131,7 +130,7 @@ async def test_changed_password_starts_reauth(
 async def test_new_refresh_token_is_accepted_by_cognito(
     hass: HomeAssistant, entry: ConfigEntry, cognito: CognitoPool
 ) -> None:
-    idp = boto3.client("cognito-idp", region_name=AWS_REGION)
+    idp = cognito.idp()
     result = idp.initiate_auth(
         ClientId=cognito.client_id,
         AuthFlow="REFRESH_TOKEN_AUTH",
@@ -169,12 +168,12 @@ async def test_guest_services_are_admin_only(
 
 
 async def test_create_guest_returns_link_to_caller(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
+    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi, garage_device_id: str
 ) -> None:
     response = await hass.services.async_call(
         "maveo",
         "create_guest",
-        {"device_id": DEVICE_ID, "ttl_hours": 1},
+        {"device_id": garage_device_id, "ttl_hours": 1},
         blocking=True,
         return_response=True,
     )
@@ -193,14 +192,14 @@ async def test_create_guest_returns_link_to_caller(
 
 
 async def test_api_errors_do_not_leak_response_body(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
+    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi, garage_device_id: str
 ) -> None:
     cloud.fail_with = 500
     with pytest.raises(HomeAssistantError) as err:
         await hass.services.async_call(
             "maveo",
             "remove_guest",
-            {"device_id": DEVICE_ID, "user_id": "u-1"},
+            {"device_id": garage_device_id, "user_id": "u-1"},
             blocking=True,
         )
     assert "HTTP 500" in str(err.value)

@@ -48,19 +48,33 @@ async def test_light_and_connectivity(hass: HomeAssistant, entry: ConfigEntry) -
         ("ttc", "5"),
         ("rssi", "-61"),
         ("buzzer", "off"),
-        ("stick_type", "Connect"),
-        ("ht_sensor", "not paired"),
+        ("stick_type", "connect"),
+        ("ht_sensor", "not_paired"),
         ("weather_temperature", "12.34"),
         ("weather_humidity", "56.0"),
     ],
 )
 async def test_device_sensors(
-    hass: HomeAssistant, entry: ConfigEntry, key: str, expected: str
+    hass: HomeAssistant, entry_all_enabled: ConfigEntry, key: str, expected: str
 ) -> None:
     assert _state(hass, "sensor", f"{DEVICE_ID}_{key}").state == expected
 
 
-async def test_rssi_attributes(hass: HomeAssistant, entry: ConfigEntry) -> None:
+@pytest.mark.parametrize("key", ["rssi", "stick_type"])
+async def test_noisy_diagnostics_are_disabled_by_default(
+    hass: HomeAssistant, entry: ConfigEntry, key: str
+) -> None:
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("sensor", "maveo", f"{DEVICE_ID}_{key}")
+    assert entity_id is not None
+    reg_entry = registry.async_get(entity_id)
+    assert reg_entry is not None
+    assert reg_entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+
+
+async def test_rssi_attributes(
+    hass: HomeAssistant, entry_all_enabled: ConfigEntry
+) -> None:
     attrs = _state(hass, "sensor", f"{DEVICE_ID}_rssi").attributes
     assert attrs["ssid"] == "home"
     assert attrs["ip"] == "192.168.0.50"
@@ -160,7 +174,11 @@ async def test_unload(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def test_every_entity_has_a_distinct_name(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    entries = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+    entries = [
+        e
+        for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+        if e.disabled_by is None
+    ]
     states = [hass.states.get(e.entity_id) for e in entries]
     names = [state.name for state in states if state is not None]
     assert len(names) == len(entries)

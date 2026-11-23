@@ -4,40 +4,42 @@ from __future__ import annotations
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.binary_sensor.const import BinarySensorDeviceClass
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.const import EntityCategory
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .client import Device
-from .coordinator import MaveoDeviceCoordinator
-from .data import MaveoConfigEntry
-from .entity import maveo_device_info
+from .data import MaveoConfigEntry, MaveoDevice
+from .entity import MaveoEntity
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MaveoConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    edata = entry.runtime_data
-    async_add_entities(
-        MaveoConnectivity(coord, edata.devices[device_id])
-        for device_id, coord in edata.coordinators.items()
-    )
+    @callback
+    def _add(device: MaveoDevice) -> None:
+        async_add_entities([MaveoConnectivity(device)])
+
+    entry.async_on_unload(entry.runtime_data.async_subscribe_devices(_add))
 
 
-class MaveoConnectivity(CoordinatorEntity[MaveoDeviceCoordinator], BinarySensorEntity):
-    """Maveo cloud connectivity sensor."""
+class MaveoConnectivity(MaveoEntity, BinarySensorEntity):
+    """Whether the stick answers over the cloud; off while it does not respond."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_translation_key = "connectivity"
 
-    def __init__(self, coordinator: MaveoDeviceCoordinator, device: Device) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.device_id}_connectivity"
-        self._attr_device_info = maveo_device_info(coordinator.device_id, device.name)
+    def __init__(self, device: MaveoDevice) -> None:
+        super().__init__(device, "connectivity")
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
 
     @property
     def is_on(self) -> bool:
-        return bool(self.coordinator.data and self.coordinator.data.get("online"))
+        return bool(self.data.get("online"))

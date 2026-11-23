@@ -14,9 +14,9 @@ from typing import Any
 import probatio
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .auth import AuthError, AuthResult, CloudError, login
-from .config import Region, get_config
+from .api import AuthError, AuthResult, CloudError, Region, get_config, login
 from .const import CONF_REFRESH_TOKEN, CONF_REGION, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +32,17 @@ STEP_USER_SCHEMA = probatio.Schema(
 )
 
 STEP_REAUTH_SCHEMA = probatio.Schema({probatio.Required(CONF_PASSWORD): str})
+
+
+def _entry_data(
+    email: str, password: str, region: Region, auth: AuthResult
+) -> dict[str, str]:
+    return {
+        CONF_EMAIL: email,
+        CONF_PASSWORD: password,
+        CONF_REGION: region.value,
+        CONF_REFRESH_TOKEN: auth.refresh_token,
+    }
 
 
 class MaveoConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -54,13 +65,7 @@ class MaveoConfigFlow(ConfigFlow, domain=DOMAIN):
             auth = await self._async_login(email, password, region, errors)
             if auth is not None:
                 return self.async_create_entry(
-                    title=email,
-                    data={
-                        CONF_EMAIL: email,
-                        CONF_PASSWORD: password,
-                        CONF_REGION: region.value,
-                        CONF_REFRESH_TOKEN: auth.refresh_token,
-                    },
+                    title=email, data=_entry_data(email, password, region, auth)
                 )
 
         return self.async_show_form(
@@ -85,13 +90,7 @@ class MaveoConfigFlow(ConfigFlow, domain=DOMAIN):
             auth = await self._async_login(email, password, region, errors)
             if auth is not None:
                 return self.async_update_reload_and_abort(
-                    entry,
-                    data={
-                        CONF_EMAIL: email,
-                        CONF_PASSWORD: password,
-                        CONF_REGION: region.value,
-                        CONF_REFRESH_TOKEN: auth.refresh_token,
-                    },
+                    entry, data=_entry_data(email, password, region, auth)
                 )
 
         return self.async_show_form(
@@ -101,13 +100,45 @@ class MaveoConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the password or region of the configured account."""
+        errors: dict[str, str] = {}
+        entry = self._get_reconfigure_entry()
+        email: str = entry.data[CONF_EMAIL]
+
+        if user_input is not None:
+            region = Region(user_input[CONF_REGION])
+            password: str = user_input[CONF_PASSWORD]
+            auth = await self._async_login(email, password, region, errors)
+            if auth is not None:
+                return self.async_update_reload_and_abort(
+                    entry, data=_entry_data(email, password, region, auth)
+                )
+
+        schema = probatio.Schema(
+            {
+                probatio.Required(CONF_PASSWORD): str,
+                probatio.Required(
+                    CONF_REGION, default=entry.data.get(CONF_REGION, Region.EU.value)
+                ): probatio.In([r.value for r in Region]),
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
+            description_placeholders={CONF_EMAIL: email},
+            errors=errors,
+        )
+
     async def _async_login(
         self, email: str, password: str, region: Region, errors: dict[str, str]
     ) -> AuthResult | None:
         """Sign in, recording a form error and returning None on failure."""
         try:
-            return await self.hass.async_add_executor_job(
-                login, email, password, get_config(region)
+            return await login(
+                async_get_clientsession(self.hass), email, password, get_config(region)
             )
         except AuthError:
             errors["base"] = "invalid_auth"

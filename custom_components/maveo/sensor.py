@@ -1,4 +1,4 @@
-"""Maveo sensor entities — device sensors and dynamic guest sensors."""
+"""Maveo sensor entities — device sensors and one sensor per guest key."""
 
 from __future__ import annotations
 
@@ -13,25 +13,30 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .client import Device, GuestUser
-from .coordinator import MaveoDeviceCoordinator
-from .data import MaveoConfigEntry
-from .entity import maveo_device_info
-from .guest_coordinator import MaveoGuestCoordinator
+from .api import GuestUser
+from .const import DOMAIN
+from .coordinator import MaveoGuestCoordinator
+from .data import MaveoConfigEntry, MaveoDevice
+from .entity import MaveoEntity, maveo_device_info
 
-# ---------------------------------------------------------------------------
-# Device sensors
-# ---------------------------------------------------------------------------
+PARALLEL_UPDATES = 0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class MaveoSensorDescription(SensorEntityDescription):
-    data_key: str = ""
+    data_key: str
     availability_key: str | None = None  # coordinator data key that must be truthy
 
 
@@ -39,15 +44,14 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
     MaveoSensorDescription(
         key="firmware",
         translation_key="firmware",
-        icon="mdi:chip",
         entity_category=EntityCategory.DIAGNOSTIC,
         data_key="firmware",
     ),
     MaveoSensorDescription(
         key="ttc",
         translation_key="ttc",
-        icon="mdi:timer",
-        native_unit_of_measurement="min",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         data_key="ttc_minutes",
     ),
@@ -55,23 +59,27 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         key="rssi",
         translation_key="rssi",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement="dBm",
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        data_key="wifi_ssid",  # special: handled in extra_state_attributes
+        entity_registry_enabled_default=False,
+        data_key="wifi_rssi",
     ),
     MaveoSensorDescription(
         key="buzzer",
         translation_key="buzzer",
-        icon="mdi:bell",
+        device_class=SensorDeviceClass.ENUM,
+        options=["on", "off"],
         entity_category=EntityCategory.DIAGNOSTIC,
         data_key="buzzer_on",
     ),
     MaveoSensorDescription(
         key="stick_type",
         translation_key="stick_type",
-        icon="mdi:help-network-outline",
+        device_class=SensorDeviceClass.ENUM,
+        options=["bluefi", "connect"],
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         data_key="is_bluefi",
     ),
     # Outdoor weather (requires GPS to be configured on the stick)
@@ -79,7 +87,7 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         key="weather_temperature",
         translation_key="weather_temperature",
         device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement="°C",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
         data_key="weather_temperature",
         availability_key="has_gps",
@@ -88,7 +96,7 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         key="weather_humidity",
         translation_key="weather_humidity",
         device_class=SensorDeviceClass.HUMIDITY,
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         data_key="weather_humidity",
         availability_key="has_gps",
@@ -97,7 +105,8 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
     MaveoSensorDescription(
         key="ht_sensor",
         translation_key="ht_sensor",
-        icon="mdi:chip",
+        device_class=SensorDeviceClass.ENUM,
+        options=["paired", "not_paired"],
         entity_category=EntityCategory.DIAGNOSTIC,
         data_key="ht_sensor_paired",
     ),
@@ -106,7 +115,7 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         key="indoor_temperature",
         translation_key="indoor_temperature",
         device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement="°C",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
         data_key="ht_temperature",
         availability_key="ht_sensor_paired",
@@ -115,7 +124,7 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         key="indoor_humidity",
         translation_key="indoor_humidity",
         device_class=SensorDeviceClass.HUMIDITY,
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         data_key="ht_humidity",
         availability_key="ht_sensor_paired",
@@ -124,7 +133,7 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
         key="indoor_battery",
         translation_key="indoor_battery",
         device_class=SensorDeviceClass.BATTERY,
-        native_unit_of_measurement="%",
+        native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         data_key="ht_battery",
@@ -132,168 +141,140 @@ DEVICE_SENSORS: tuple[MaveoSensorDescription, ...] = (
     ),
 )
 
+# Coordinator keys exposed as attributes of the H+T sensor status entity.
+_HT_ATTRIBUTES = (
+    ("ht_temperature", "temperature"),
+    ("ht_humidity", "humidity"),
+    ("ht_battery", "battery"),
+    ("ht_last_update", "last_update"),
+    ("ht_name", "name"),
+    ("ht_manufacturer", "manufacturer"),
+    ("ht_model", "model"),
+    ("ht_serial", "serial"),
+    ("ht_firmware_rev", "firmware_rev"),
+    ("ht_software_rev", "software_rev"),
+    ("ht_hardware_rev", "hardware_rev"),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MaveoConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    edata = entry.runtime_data
+    @callback
+    def _add(device: MaveoDevice) -> None:
+        async_add_entities(MaveoDeviceSensor(device, desc) for desc in DEVICE_SENSORS)
+        _track_guests(hass, entry, device, async_add_entities)
 
-    # Static device sensors
-    entities: list[SensorEntity] = []
-    for device_id, coord in edata.coordinators.items():
-        device = edata.devices[device_id]
-        for desc in DEVICE_SENSORS:
-            entities.append(MaveoDeviceSensor(coord, device, desc))
-    async_add_entities(entities)
-
-    # Dynamic guest sensors — one per guest, created as they appear
-    for device_id, guest_coord in edata.guest_coordinators.items():
-        device = edata.devices[device_id]
-        _setup_guest_sensor_tracking(
-            hass, entry, guest_coord, device_id, device, async_add_entities
-        )
+    entry.async_on_unload(entry.runtime_data.async_subscribe_devices(_add))
 
 
-def _setup_guest_sensor_tracking(
+@callback
+def _track_guests(
     hass: HomeAssistant,
     entry: MaveoConfigEntry,
-    guest_coord: MaveoGuestCoordinator,
-    device_id: str,
-    device: Device,
-    async_add_entities: AddEntitiesCallback,
+    device: MaveoDevice,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add a sensor per guest key and remove it when the key is gone."""
     tracked: set[str] = set()
+    coordinator = device.guests
 
     @callback
     def _on_update() -> None:
-        guests: list[GuestUser] = guest_coord.data or []
-        new = [
-            MaveoGuestSensor(guest_coord, g.user_id, device_id, device)
-            for g in guests
-            if g.user_id not in tracked
-        ]
-        for e in new:
-            tracked.add(e.user_id)
+        if not coordinator.last_update_success:
+            return
+        current = {g.user_id for g in coordinator.data or []}
+        new = current - tracked
         if new:
-            async_add_entities(new)
+            async_add_entities(
+                MaveoGuestSensor(device, coordinator, user_id) for user_id in new
+            )
+            tracked.update(new)
+        registry = er.async_get(hass)
+        for user_id in tracked - current:
+            entity_id = registry.async_get_entity_id(
+                "sensor", DOMAIN, _guest_unique_id(device.info.id, user_id)
+            )
+            if entity_id is not None:
+                registry.async_remove(entity_id)
+            tracked.discard(user_id)
 
-    entry.async_on_unload(guest_coord.async_add_listener(_on_update))
+    entry.async_on_unload(coordinator.async_add_listener(_on_update))
     _on_update()
 
 
-# ---------------------------------------------------------------------------
-# Device sensor entity
-# ---------------------------------------------------------------------------
+def _guest_unique_id(device_id: str, user_id: str) -> str:
+    return f"{device_id}_guest_{user_id}"
 
 
-class MaveoDeviceSensor(CoordinatorEntity[MaveoDeviceCoordinator], SensorEntity):
-    """A single device diagnostic sensor."""
+class MaveoDeviceSensor(MaveoEntity, SensorEntity):
+    """A single device sensor."""
 
     entity_description: MaveoSensorDescription
-    _attr_has_entity_name = True
 
     def __init__(
-        self,
-        coordinator: MaveoDeviceCoordinator,
-        device: Device,
-        description: MaveoSensorDescription,
+        self, device: MaveoDevice, description: MaveoSensorDescription
     ) -> None:
-        super().__init__(coordinator)
+        super().__init__(device, description.key)
         self.entity_description = description
-        self._attr_unique_id = f"{coordinator.device_id}_{description.key}"
-        self._attr_device_info = maveo_device_info(coordinator.device_id, device.name)
 
     @property
     def available(self) -> bool:
-        data = self.coordinator.data or {}
-        if not data.get("online"):
-            return False
         av_key = self.entity_description.availability_key
-        if av_key is not None:
-            return bool(data.get(av_key))
-        return True
+        return super().available and (av_key is None or bool(self.data.get(av_key)))
 
     @property
     def native_value(self) -> Any:
-        data = self.coordinator.data or {}
-        key = self.entity_description.data_key
-
-        if self.entity_description.key == "rssi":
-            return data.get("wifi_rssi")
-        if self.entity_description.key == "buzzer":
-            val = data.get("buzzer_on")
-            return "on" if val else "off" if val is not None else None
-        if self.entity_description.key == "stick_type":
-            is_bluefi = data.get("is_bluefi")
-            if is_bluefi is None:
-                return None
-            return "BlueFi" if is_bluefi else "Connect"
-        if self.entity_description.key == "ht_sensor":
-            paired = data.get("ht_sensor_paired")
-            if paired is None:
-                return None
-            return "paired" if paired else "not paired"
-        return data.get(key)
+        key = self.entity_description.key
+        value = self.data.get(self.entity_description.data_key)
+        if value is None:
+            return None
+        if key == "buzzer":
+            return "on" if value else "off"
+        if key == "stick_type":
+            return "bluefi" if value else "connect"
+        if key == "ht_sensor":
+            return "paired" if value else "not_paired"
+        return value
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        data = self.coordinator.data or {}
-        if self.entity_description.key == "rssi":
-            attrs: dict[str, Any] = {}
-            if data.get("wifi_ssid") is not None:
-                attrs["ssid"] = data["wifi_ssid"]
-            if data.get("wifi_ip") is not None:
-                attrs["ip"] = data["wifi_ip"]
-            if data.get("wifi_mac") is not None:
-                attrs["mac"] = data["wifi_mac"]
-            return attrs
-        if self.entity_description.key == "ht_sensor":
-            attrs = {}
-            for src_key, attr_name in (
-                ("ht_temperature", "temperature"),
-                ("ht_humidity", "humidity"),
-                ("ht_battery", "battery"),
-                ("ht_last_update", "last_update"),
-                ("ht_name", "name"),
-                ("ht_manufacturer", "manufacturer"),
-                ("ht_model", "model"),
-                ("ht_serial", "serial"),
-                ("ht_firmware_rev", "firmware_rev"),
-                ("ht_software_rev", "software_rev"),
-                ("ht_hardware_rev", "hardware_rev"),
-            ):
-                val = data.get(src_key)
-                if val is not None:
-                    attrs[attr_name] = val
-            return attrs
-        return {}
-
-
-# ---------------------------------------------------------------------------
-# Guest sensor entity
-# ---------------------------------------------------------------------------
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        key = self.entity_description.key
+        if key == "rssi":
+            return {
+                attr: self.data[src]
+                for src, attr in (
+                    ("wifi_ssid", "ssid"),
+                    ("wifi_ip", "ip"),
+                    ("wifi_mac", "mac"),
+                )
+                if self.data.get(src) is not None
+            }
+        if key == "ht_sensor":
+            return {
+                attr: self.data[src]
+                for src, attr in _HT_ATTRIBUTES
+                if self.data.get(src) is not None
+            }
+        return None
 
 
 class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
-    """Sensor entity for a single guest key — shows TTL and metadata."""
+    """Remaining validity of one guest key. The token is never exposed."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:account-key"
+    _attr_translation_key = "guest"
 
     def __init__(
-        self,
-        coordinator: MaveoGuestCoordinator,
-        user_id: str,
-        device_id: str,
-        device: Device,
+        self, device: MaveoDevice, coordinator: MaveoGuestCoordinator, user_id: str
     ) -> None:
         super().__init__(coordinator)
         self.user_id = user_id
-        self._device_id = device_id
-        self._attr_unique_id = f"{device_id}_guest_{user_id}"
-        self._attr_device_info = maveo_device_info(device_id, device.name)
+        self._attr_unique_id = _guest_unique_id(device.info.id, user_id)
+        self._attr_translation_placeholders = {"guest": user_id[:8]}
+        self._attr_device_info = maveo_device_info(device)
 
     def _get_guest(self) -> GuestUser | None:
         return next(
@@ -303,21 +284,14 @@ class MaveoGuestSensor(CoordinatorEntity[MaveoGuestCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self._get_guest() is not None
+        return super().available and self._get_guest() is not None
 
     @property
-    def name(self) -> str:
-        guest = self._get_guest()
-        if guest and guest.nametag1:
-            return f"Guest: {guest.nametag1}"
-        return f"Guest {self.user_id[:8]}"
-
-    @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         guest = self._get_guest()
         if guest is None:
-            return "unavailable"
-        if guest.ttl == "token expired" or not guest.ttl.isdigit():
+            return None
+        if not guest.ttl.isdigit():
             return "expired"
         remaining = int(guest.ttl) - int(time.time())
         if remaining <= 0:

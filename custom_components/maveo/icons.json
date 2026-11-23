@@ -1,0 +1,42 @@
+{
+  "entity": {
+    "light": {
+      "garage_light": {
+        "default": "mdi:lightbulb"
+      }
+    },
+    "device_tracker": {
+      "location": {
+        "default": "mdi:garage"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "default": "mdi:chip"
+      },
+      "ttc": {
+        "default": "mdi:timer"
+      },
+      "buzzer": {
+        "default": "mdi:bell"
+      },
+      "stick_type": {
+        "default": "mdi:help-network-outline"
+      },
+      "ht_sensor": {
+        "default": "mdi:chip"
+      },
+      "guest": {
+        "default": "mdi:account-key"
+      }
+    }
+  },
+  "services": {
+    "create_guest": {
+      "service": "mdi:account-key"
+    },
+    "remove_guest": {
+      "service": "mdi:account-remove"
+    }
+  }
+}

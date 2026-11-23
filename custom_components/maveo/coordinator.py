@@ -1,20 +1,34 @@
-"""Device state coordinator — MQTT burst-poll every 30 s."""
+"""Coordinators for the Maveo account, device state and guest keys."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .auth import AuthError, CloudError
-from .const import DEVICE_POLL_INTERVAL
-from .iot import Command, MaveoIoTClient
+from .api import (
+    APIError,
+    AuthError,
+    CloudError,
+    Command,
+    Device,
+    GuestUser,
+    MaveoIoTClient,
+)
+from .const import (
+    ACCOUNT_POLL_INTERVAL,
+    DEVICE_POLL_INTERVAL,
+    DOMAIN,
+    GUEST_POLL_INTERVAL,
+)
 from .session import MaveoSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,8 +82,95 @@ _EMPTY: dict[str, Any] = {
 }
 
 
+async def _async_ensure_session(session: MaveoSession) -> None:
+    """Renew credentials, mapping failures to coordinator exceptions."""
+    try:
+        await session.async_ensure_valid()
+    except AuthError as err:
+        raise ConfigEntryAuthFailed(
+            translation_domain=DOMAIN,
+            translation_key="auth_failed",
+            translation_placeholders={"error": str(err)},
+        ) from err
+    except CloudError as err:
+        raise UpdateFailed(
+            translation_domain=DOMAIN,
+            translation_key="cloud_unreachable",
+            translation_placeholders={"error": str(err)},
+        ) from err
+
+
+class MaveoAccountCoordinator(DataUpdateCoordinator[dict[str, Device]]):
+    """Devices on the Maveo account, polled so new and removed sticks are seen."""
+
+    config_entry: ConfigEntry
+
+    def __init__(
+        self, hass: HomeAssistant, entry: ConfigEntry, session: MaveoSession
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name="Maveo account",
+            update_interval=timedelta(seconds=ACCOUNT_POLL_INTERVAL),
+        )
+        self._session = session
+
+    async def _async_update_data(self) -> dict[str, Device]:
+        await _async_ensure_session(self._session)
+        try:
+            devices = await self._session.client.list_devices()
+        except APIError as err:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="cloud_unreachable",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        return {d.id: d for d in devices}
+
+
+class MaveoGuestCoordinator(DataUpdateCoordinator[list[GuestUser]]):
+    """Guest keys of a single Maveo device — REST poll."""
+
+    config_entry: ConfigEntry
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        session: MaveoSession,
+        device_id: str,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"Maveo guests {device_id}",
+            update_interval=timedelta(seconds=GUEST_POLL_INTERVAL),
+        )
+        self._session = session
+        self.device_id = device_id
+
+    async def _async_update_data(self) -> list[GuestUser]:
+        await _async_ensure_session(self._session)
+        try:
+            return await self._session.client.list_guest_users(self.device_id)
+        except APIError as err:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="cloud_unreachable",
+                translation_placeholders={"error": str(err)},
+            ) from err
+
+
 class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Coordinator for a single Maveo device — MQTT burst-poll."""
+    """State of a single Maveo device — MQTT burst-poll.
+
+    A cloud or MQTT failure fails the update, so the coordinator logs it once
+    and marks entities unavailable. A device that does not answer is reported
+    as offline instead, and that change is logged once each way.
+    """
 
     config_entry: ConfigEntry
 
@@ -89,33 +190,42 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._session = session
         self.device_id = device_id
+        self._was_online: bool | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
-        try:
-            await self._session.async_ensure_valid()
-        except AuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except CloudError as err:
-            raise UpdateFailed(f"Auth refresh failed: {err}") from err
+        await _async_ensure_session(self._session)
 
         result = dict(_EMPTY)
-
         # The cloud "status" endpoint reports the last AWS IoT lifecycle event
         # (e.g. SERVER_INITIATED_DISCONNECT) and can claim the device is
         # disconnected while it still answers over MQTT. So we don't gate on it;
         # we probe the device directly and treat a real MQTT response as online.
         try:
             result.update(await self._fetch_mqtt_state())
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("MQTT state fetch failed for %s: %s", self.device_id, err)
+        except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="device_unreachable",
+                translation_placeholders={
+                    "device_id": self.device_id,
+                    "error": str(err) or type(err).__name__,
+                },
+            ) from err
 
-        result["online"] = result.get("door_position") is not None
+        online = result.get("door_position") is not None
+        result["online"] = online
+        if online != self._was_online:
+            if online:
+                _LOGGER.info("Maveo device %s is online", self.device_id)
+            else:
+                _LOGGER.warning("Maveo device %s does not respond", self.device_id)
+            self._was_online = online
         return result
 
     async def _fetch_mqtt_state(self) -> dict[str, Any]:
         updates: dict[str, Any] = {}
         async with MaveoIoTClient(
-            self._session.auth, self._session.config, self.device_id
+            self._session.http, self._session.auth, self._session.config, self.device_id
         ) as iot:
             await iot.subscribe()
             for key, cmd, response_key in _READ_COMMANDS:
@@ -231,21 +341,35 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return updates
 
-    async def async_send_command(self, command: dict[str, Any]) -> None:
+    async def async_send_command(self, command: Mapping[str, Any]) -> None:
         """Send an IoT command then schedule a coordinator refresh."""
         try:
             await self._session.async_ensure_valid()
+            async with MaveoIoTClient(
+                self._session.http,
+                self._session.auth,
+                self._session.config,
+                self.device_id,
+            ) as iot:
+                await iot.subscribe()
+                await iot.send(command)
+                await iot.receive(timeout=1.0)  # drain any immediate response
         except AuthError as err:
             self.config_entry.async_start_reauth(self.hass)
-            raise HomeAssistantError(str(err)) from err
-        except CloudError as err:
-            raise HomeAssistantError(str(err)) from err
-        async with MaveoIoTClient(
-            self._session.auth, self._session.config, self.device_id
-        ) as iot:
-            await iot.subscribe()
-            await iot.send(command)
-            await iot.receive(timeout=1.0)  # drain any immediate response
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="auth_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        except (CloudError, aiohttp.ClientError, TimeoutError, ConnectionError) as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={
+                    "device_id": self.device_id,
+                    "error": str(err) or type(err).__name__,
+                },
+            ) from err
 
         await asyncio.sleep(2)
         await self.async_request_refresh()

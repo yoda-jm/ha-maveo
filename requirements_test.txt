@@ -1,11 +1,8 @@
 pytest-homeassistant-custom-component==0.13.375
 boto3==1.44.9
 pycryptodome==4.6.0
-websockets==17.4
-moto[cognitoidp,cognitoidentity]==5.2.5
-pytest-httpserver==1.2.1
+moto[server,cognitoidp,cognitoidentity]==5.2.5
 hypothesis==6.170.17
 mypy==2.4.1
 boto3-stubs[cognito-idp,cognito-identity]==1.44.9
-types-requests==2.33.0.20261030
 ruff==0.17.6

@@ -30,10 +30,13 @@ async def test_create_guest_adds_user(
     hass: HomeAssistant,
     entry: ConfigEntry,
     cloud: FakeMaveoApi,
+    garage_device_id: str,
     admin: bool,
     rights: int,
 ) -> None:
-    await _create_guest(hass, {"device_id": DEVICE_ID, "ttl_hours": 2, "admin": admin})
+    await _create_guest(
+        hass, {"device_id": garage_device_id, "ttl_hours": 2, "admin": admin}
+    )
     add = [r for r in cloud.requests if r["command"] == "add_user"]
     assert add == [
         {"deviceid": DEVICE_ID, "command": "add_user", "ttl": 7200, "rights": rights}
@@ -41,9 +44,9 @@ async def test_create_guest_adds_user(
 
 
 async def test_created_guest_gets_a_sensor(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
+    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi, garage_device_id: str
 ) -> None:
-    await _create_guest(hass, {"device_id": DEVICE_ID})
+    await _create_guest(hass, {"device_id": garage_device_id})
     await hass.async_block_till_done()
     user_id = cloud.guests[0]["userid"]
     assert er.async_get(hass).async_get_entity_id(
@@ -52,7 +55,7 @@ async def test_created_guest_gets_a_sensor(
 
 
 async def test_remove_guest(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
+    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi, garage_device_id: str
 ) -> None:
     cloud.guests.append(
         {"userid": "u-1", "token": "t", "rights": "0", "ttl": "4102444800"}
@@ -60,7 +63,7 @@ async def test_remove_guest(
     await hass.services.async_call(
         "maveo",
         "remove_guest",
-        {"device_id": DEVICE_ID, "user_id": "u-1"},
+        {"device_id": garage_device_id, "user_id": "u-1"},
         blocking=True,
     )
     assert cloud.guests == []
@@ -70,13 +73,13 @@ async def test_remove_guest(
 
 
 async def test_ttl_hours_out_of_range_rejected(
-    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi
+    hass: HomeAssistant, entry: ConfigEntry, cloud: FakeMaveoApi, garage_device_id: str
 ) -> None:
     with pytest.raises((ServiceValidationError, probatio.Invalid)):
         await hass.services.async_call(
             "maveo",
             "create_guest",
-            {"device_id": DEVICE_ID, "ttl_hours": 721},
+            {"device_id": garage_device_id, "ttl_hours": 721},
             blocking=True,
         )
     assert "add_user" not in cloud.commands()

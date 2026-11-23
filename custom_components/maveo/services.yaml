@@ -3,7 +3,8 @@ create_guest:
     device_id:
       required: true
       selector:
-        text:
+        device:
+          integration: maveo
     ttl_hours:
       required: false
       default: 24
@@ -23,7 +24,8 @@ remove_guest:
     device_id:
       required: true
       selector:
-        text:
+        device:
+          integration: maveo
     user_id:
       required: true
       selector:

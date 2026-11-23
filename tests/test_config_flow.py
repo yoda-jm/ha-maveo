@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import boto3
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from .conftest import add_entry_via_flow
-from .fakes import AWS_REGION, PASSWORD, CognitoPool, FakeMaveoApi
+from .fakes import CognitoPool, FakeMaveoApi
 
 
 async def test_wrong_password_shows_invalid_auth(
@@ -32,16 +31,7 @@ async def test_two_accounts_load_side_by_side(
     hass: HomeAssistant, cloud: FakeMaveoApi, cognito: CognitoPool
 ) -> None:
     second = "second@example.com"
-    idp = boto3.client("cognito-idp", region_name=AWS_REGION)
-    idp.admin_create_user(
-        UserPoolId=cognito.user_pool_id, Username=second, MessageAction="SUPPRESS"
-    )
-    idp.admin_set_user_password(
-        UserPoolId=cognito.user_pool_id,
-        Username=second,
-        Password=PASSWORD,
-        Permanent=True,
-    )
+    cognito.add_user(second)
 
     assert (await add_entry_via_flow(hass))["type"] is FlowResultType.CREATE_ENTRY
     result = await add_entry_via_flow(hass, email=second)

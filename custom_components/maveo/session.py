@@ -6,13 +6,13 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .auth import AuthError, AuthResult, login, refresh
-from .client import MaveoClient
-from .config import Config
+from .api import AuthError, AuthResult, Config, MaveoClient, login, refresh
 from .const import CONF_REFRESH_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,66 +29,70 @@ class MaveoSession:
     asked to reauthenticate when the password itself is rejected.
     """
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, config: Config) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        config: Config,
+        http: aiohttp.ClientSession,
+        auth: AuthResult,
+    ) -> None:
         self._hass = hass
         self._entry = entry
         self._lock = asyncio.Lock()
         self.config = config
-        self._auth: AuthResult | None = None
-        self._client: MaveoClient | None = None
+        self.http = http
+        self.auth = auth
+        self.client = MaveoClient(http, auth, config)
+        self._store_refresh_token()
 
-    @property
-    def auth(self) -> AuthResult:
-        if self._auth is None:
-            raise RuntimeError("Maveo session has not signed in")
-        return self._auth
-
-    @property
-    def client(self) -> MaveoClient:
-        if self._client is None:
-            raise RuntimeError("Maveo session has not signed in")
-        return self._client
+    @classmethod
+    async def async_sign_in(
+        cls, hass: HomeAssistant, entry: ConfigEntry, config: Config
+    ) -> MaveoSession:
+        """Sign in with the stored credentials. Raises AuthError or CloudError."""
+        http = async_get_clientsession(hass)
+        auth = await _async_sign_in(
+            http, config, entry.data.get(CONF_REFRESH_TOKEN), entry
+        )
+        return cls(hass, entry, config, http, auth)
 
     async def async_ensure_valid(self) -> None:
-        """Sign in or renew credentials close to expiry.
-
-        Raises AuthError when no stored credential is accepted, or CloudError.
-        """
+        """Renew credentials close to expiry. Raises AuthError or CloudError."""
         async with self._lock:
-            if (
-                self._auth is not None
-                and self._auth.expiration - _RENEW_MARGIN > datetime.now(UTC)
-            ):
+            if self.auth.expiration - _RENEW_MARGIN > datetime.now(UTC):
                 return
-            refresh_token = (
-                self._auth.refresh_token
-                if self._auth is not None
-                else self._entry.data.get(CONF_REFRESH_TOKEN)
+            self.auth = await _async_sign_in(
+                self.http, self.config, self.auth.refresh_token, self._entry
             )
-            auth = await self._hass.async_add_executor_job(
-                self._sign_in,
-                refresh_token,
-                self._entry.data.get(CONF_EMAIL),
-                self._entry.data.get(CONF_PASSWORD),
-            )
-            self._auth = auth
-            self._client = MaveoClient(auth, self.config)
-            if self._entry.data.get(CONF_REFRESH_TOKEN) != auth.refresh_token:
-                self._hass.config_entries.async_update_entry(
-                    self._entry,
-                    data={**self._entry.data, CONF_REFRESH_TOKEN: auth.refresh_token},
-                )
+            self.client = MaveoClient(self.http, self.auth, self.config)
+            self._store_refresh_token()
 
-    def _sign_in(
-        self, refresh_token: str | None, email: str | None, password: str | None
-    ) -> AuthResult:
-        if refresh_token:
-            try:
-                return refresh(refresh_token, self.config)
-            except AuthError:
-                if not (email and password):
-                    raise
-                _LOGGER.info("Maveo refresh token rejected; signing in with password")
-        if not (email and password):
-            raise AuthError("No stored Maveo credentials")
-        return login(email, password, self.config)
+    def _store_refresh_token(self) -> None:
+        """Persist the refresh token when Cognito has issued a new one."""
+        if self._entry.data.get(CONF_REFRESH_TOKEN) != self.auth.refresh_token:
+            self._hass.config_entries.async_update_entry(
+                self._entry,
+                data={**self._entry.data, CONF_REFRESH_TOKEN: self.auth.refresh_token},
+            )
+
+
+async def _async_sign_in(
+    http: aiohttp.ClientSession,
+    config: Config,
+    refresh_token: str | None,
+    entry: ConfigEntry,
+) -> AuthResult:
+    """Use the refresh token, falling back to the stored password."""
+    email: str | None = entry.data.get(CONF_EMAIL)
+    password: str | None = entry.data.get(CONF_PASSWORD)
+    if refresh_token:
+        try:
+            return await refresh(http, refresh_token, config)
+        except AuthError:
+            if not (email and password):
+                raise
+            _LOGGER.info("Maveo refresh token rejected; signing in with password")
+    if not (email and password):
+        raise AuthError("No stored Maveo credentials")
+    return await login(http, email, password, config)

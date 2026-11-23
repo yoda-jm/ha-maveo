@@ -1,30 +1,34 @@
-"""Shared fixtures: moto Cognito, local REST server, fake MQTT stick."""
+"""Shared fixtures: moto Cognito server and a local Maveo REST/MQTT server."""
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
-import websockets
+from aiohttp import web
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from moto import mock_aws
-from pytest_httpserver import HTTPServer
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from moto.core.base_backend import BackendDict
+from moto.server import ThreadedMotoServer
 
-from custom_components.maveo import config as maveo_config
+from custom_components.maveo.api import config as maveo_config
 from custom_components.maveo.const import DOMAIN
 
 from .fakes import (
     AWS_REGION,
+    DEVICE_ID,
     EMAIL,
     PASSWORD,
     CognitoPool,
     FakeMaveoApi,
     FakeStick,
+    create_app,
     create_cognito_pool,
 )
 
@@ -37,36 +41,49 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture
-def httpserver(socket_enabled: None) -> Iterator[HTTPServer]:
-    """Local REST server; HA's harness blocks sockets unless enabled."""
-    server = HTTPServer(host="127.0.0.1", port=0)
-    server.start()
-    yield server
-    server.clear()
-    server.stop()
-
-
-@pytest.fixture
-def cognito(monkeypatch: pytest.MonkeyPatch) -> Iterator[CognitoPool]:
+def cognito(
+    monkeypatch: pytest.MonkeyPatch, socket_enabled: None
+) -> Iterator[CognitoPool]:
+    """A fresh moto Cognito server; HA's harness blocks sockets unless enabled."""
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
     monkeypatch.delenv("AWS_PROFILE", raising=False)
-    with mock_aws():
-        yield create_cognito_pool()
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
+    server.start()
+    host, port = server.get_host_and_port()
+    endpoint = f"http://{host}:{port}"
+    try:
+        yield create_cognito_pool(endpoint)
+    finally:
+        server.stop()
+        BackendDict.reset()
 
 
 @pytest.fixture
-def maveo_api(httpserver: HTTPServer) -> FakeMaveoApi:
-    api = FakeMaveoApi()
-    httpserver.expect_request("/admin", method="POST").respond_with_handler(api.handle)
-    return api
+def maveo_api() -> FakeMaveoApi:
+    return FakeMaveoApi()
 
 
 @pytest.fixture
-def stick(monkeypatch: pytest.MonkeyPatch) -> FakeStick:
-    fake = FakeStick()
-    monkeypatch.setattr(websockets, "connect", fake.connect)
-    return fake
+def stick() -> FakeStick:
+    return FakeStick()
+
+
+@pytest.fixture
+async def maveo_server(
+    socket_enabled: None, maveo_api: FakeMaveoApi, stick: FakeStick
+) -> AsyncIterator[str]:
+    """Base URL of the local REST + MQTT-over-WebSocket server."""
+    runner = web.AppRunner(create_app(maveo_api, stick))
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    assert runner.addresses
+    host, port = runner.addresses[0][:2]
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        await runner.cleanup()
 
 
 @pytest.fixture
@@ -74,10 +91,9 @@ def cloud(
     monkeypatch: pytest.MonkeyPatch,
     cognito: CognitoPool,
     maveo_api: FakeMaveoApi,
-    stick: FakeStick,
-    httpserver: HTTPServer,
+    maveo_server: str,
 ) -> FakeMaveoApi:
-    """Point the EU region at the fake Cognito pool and local REST server."""
+    """Point the EU region at the fake Cognito, REST and MQTT servers."""
     eu = maveo_config.Region.EU
     configs: dict[Any, maveo_config.Config] = dict(maveo_config._CONFIGS)
     configs[eu] = dataclasses.replace(
@@ -86,8 +102,11 @@ def cloud(
         client_id=cognito.client_id,
         user_pool_id=cognito.user_pool_id,
         identity_pool_id=cognito.identity_pool_id,
-        api_admin_url=httpserver.url_for("/admin"),
+        api_admin_url=f"{maveo_server}/admin",
         iot_hostname="iot.maveo.test",
+        cognito_idp_url=f"{cognito.endpoint_url}/",
+        cognito_identity_url=f"{cognito.endpoint_url}/",
+        iot_url=f"{maveo_server.replace('http', 'ws', 1)}/mqtt",
     )
     monkeypatch.setattr(maveo_config, "_CONFIGS", configs)
     return maveo_api
@@ -117,3 +136,25 @@ async def entry(hass: HomeAssistant, cloud: FakeMaveoApi) -> ConfigEntry:
     entries = hass.config_entries.async_entries(DOMAIN)
     assert len(entries) == 1
     return entries[0]
+
+
+@pytest.fixture
+async def entry_all_enabled(hass: HomeAssistant, entry: ConfigEntry) -> ConfigEntry:
+    """The Maveo entry with entities disabled by default enabled, as a user would."""
+    registry = er.async_get(hass)
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if reg_entry.disabled_by is not None:
+            registry.async_update_entity(reg_entry.entity_id, disabled_by=None)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+@pytest.fixture
+def garage_device_id(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    """Home Assistant device registry ID of the fake garage stick."""
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, DEVICE_ID), entry.entry_id
+    )
+    assert device is not None
+    return device.id

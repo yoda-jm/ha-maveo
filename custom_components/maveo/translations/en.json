@@ -11,7 +11,8 @@
         },
         "data_description": {
           "region": "EU for Europe, US for North America",
-          "password": "Stored so Home Assistant can sign in again when the Maveo session expires."
+          "password": "Stored so Home Assistant can sign in again when the Maveo session expires.",
+          "email": "The email address of your Maveo account."
         }
       },
       "reauth_confirm": {
@@ -19,6 +20,21 @@
         "description": "Maveo rejected the stored password for {email}. Enter the current password.",
         "data": {
           "password": "Password"
+        },
+        "data_description": {
+          "password": "The current Maveo password for this account."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Maveo",
+        "description": "Update the password or region for {email}.",
+        "data": {
+          "password": "Password",
+          "region": "Region"
+        },
+        "data_description": {
+          "password": "The current Maveo password for this account.",
+          "region": "EU for Europe, US for North America"
         }
       }
     },
@@ -29,7 +45,8 @@
     },
     "abort": {
       "already_configured": "This account is already configured",
-      "reauth_successful": "Signed in again"
+      "reauth_successful": "Signed in again",
+      "reconfigure_successful": "Reconfiguration successful"
     }
   },
   "entity": {
@@ -44,13 +61,25 @@
         "name": "WiFi signal"
       },
       "buzzer": {
-        "name": "Buzzer"
+        "name": "Buzzer",
+        "state": {
+          "on": "On",
+          "off": "Off"
+        }
       },
       "stick_type": {
-        "name": "Stick type"
+        "name": "Stick type",
+        "state": {
+          "bluefi": "BlueFi",
+          "connect": "Connect"
+        }
       },
       "ht_sensor": {
-        "name": "Indoor sensor"
+        "name": "Indoor sensor",
+        "state": {
+          "paired": "Paired",
+          "not_paired": "Not paired"
+        }
       },
       "weather_temperature": {
         "name": "Outdoor temperature"
@@ -66,6 +95,9 @@
       },
       "indoor_battery": {
         "name": "Indoor sensor battery"
+      },
+      "guest": {
+        "name": "Guest {guest}"
       }
     },
     "binary_sensor": {
@@ -95,8 +127,8 @@
       "description": "Admin only. Create a time-limited guest key for a device and return its share link in the action response.",
       "fields": {
         "device_id": {
-          "name": "Device ID",
-          "description": "Numeric device ID from the devices list."
+          "name": "Device",
+          "description": "The Maveo garage device."
         },
         "ttl_hours": {
           "name": "Validity (hours)",
@@ -113,14 +145,37 @@
       "description": "Admin only. Revoke a guest key from a device.",
       "fields": {
         "device_id": {
-          "name": "Device ID",
-          "description": "Numeric device ID."
+          "name": "Device",
+          "description": "The Maveo garage device."
         },
         "user_id": {
           "name": "Guest user ID",
           "description": "UUID of the guest user to remove."
         }
       }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Maveo rejected the stored credentials: {error}"
+    },
+    "cloud_unreachable": {
+      "message": "Cannot reach the Maveo cloud: {error}"
+    },
+    "device_unreachable": {
+      "message": "Cannot reach Maveo device {device_id}: {error}"
+    },
+    "command_failed": {
+      "message": "Command to Maveo device {device_id} failed: {error}"
+    },
+    "device_not_found": {
+      "message": "{device_id} is not a loaded Maveo device"
+    },
+    "guest_create_failed": {
+      "message": "Could not create the guest key: {error}"
+    },
+    "guest_remove_failed": {
+      "message": "Could not remove the guest key: {error}"
     }
   }
 }

@@ -1,11 +1,13 @@
-"""Property-based tests (Hypothesis) for the pure protocol code."""
+"""Property-based tests (Hypothesis) for the pure protocol code.
+
+pycryptodome decrypts the guest link as an oracle independent of the
+`cryptography` code that encrypts it.
+"""
 
 from __future__ import annotations
 
 import base64
 import json
-from dataclasses import fields
-from datetime import UTC, datetime
 from urllib.parse import parse_qs
 
 from Crypto.Cipher import AES
@@ -13,10 +15,7 @@ from Crypto.Util.Padding import unpad
 from hypothesis import given
 from hypothesis import strategies as st
 
-from custom_components.maveo import iot
-from custom_components.maveo.auth import AuthResult
-from custom_components.maveo.client import GuestUser, MaveoClient
-from custom_components.maveo.config import Region, get_config
+from custom_components.maveo.api import GuestUser, build_guest_link, iot
 
 _KEY = base64.b64decode("zbH/cSqJIcgIta9NEhfJ8GSuT79dTQNDB2AcPBfLxyo=")
 
@@ -25,17 +24,6 @@ _ttl = st.one_of(
     st.integers(min_value=0, max_value=4102444800).map(str),
     st.just("token expired"),
 )
-
-
-def _client() -> MaveoClient:
-    # Built from the dataclass fields so it also fits the original AuthResult.
-    values: dict[str, object] = {f.name: f.name for f in fields(AuthResult)}
-    values["expiration"] = datetime(2100, 1, 1, tzinfo=UTC)
-    auth = AuthResult(**values)  # type: ignore[arg-type]
-    return MaveoClient(auth, get_config(Region.EU))
-
-
-_CLIENT = _client()
 
 
 def _decrypt(link: str) -> dict[str, str]:
@@ -67,7 +55,7 @@ def test_guest_link_round_trips(
     lng: float,
 ) -> None:
     guest = GuestUser(user_id=user_id, token=token, rights=rights, ttl=ttl)
-    link = _CLIENT.generate_guest_link(
+    link = build_guest_link(
         guest, device_id, name, location_name=name, latitude=lat, longitude=lng
     )
 

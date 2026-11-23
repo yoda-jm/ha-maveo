@@ -4,42 +4,37 @@ from __future__ import annotations
 
 from homeassistant.components.device_tracker.const import SourceType
 from homeassistant.components.device_tracker.entity import TrackerEntity
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .client import Device
-from .coordinator import MaveoDeviceCoordinator
-from .data import MaveoConfigEntry
-from .entity import maveo_device_info
+from .data import MaveoConfigEntry, MaveoDevice
+from .entity import MaveoEntity, maveo_device_info
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MaveoConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    edata = entry.runtime_data
-    async_add_entities(
-        MaveoGarageLocation(coord, edata.devices[device_id])
-        for device_id, coord in edata.coordinators.items()
-        # Only create location entity if GPS data will be available (optimistic)
-    )
+    @callback
+    def _add(device: MaveoDevice) -> None:
+        async_add_entities([MaveoGarageLocation(device)])
+
+    entry.async_on_unload(entry.runtime_data.async_subscribe_devices(_add))
 
 
-class MaveoGarageLocation(CoordinatorEntity[MaveoDeviceCoordinator], TrackerEntity):
+class MaveoGarageLocation(MaveoEntity, TrackerEntity):
     """Device tracker for the garage location."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "location"
-    _attr_icon = "mdi:garage"
     _attr_source_type = SourceType.GPS
 
-    def __init__(self, coordinator: MaveoDeviceCoordinator, device: Device) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.device_id}_location"
-        self._device_info = maveo_device_info(coordinator.device_id, device.name)
+    def __init__(self, device: MaveoDevice) -> None:
+        super().__init__(device, "location")
+        self._device_info = maveo_device_info(device)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -48,16 +43,21 @@ class MaveoGarageLocation(CoordinatorEntity[MaveoDeviceCoordinator], TrackerEnti
 
     @property
     def available(self) -> bool:
-        data = self.coordinator.data or {}
-        return data.get("gps_lat") is not None and data.get("gps_lng") is not None
+        return (
+            self.coordinator.last_update_success
+            and self.data.get("gps_lat") is not None
+            and self.data.get("gps_lng") is not None
+        )
 
     @property
     def latitude(self) -> float | None:
-        return (self.coordinator.data or {}).get("gps_lat")
+        value = self.data.get("gps_lat")
+        return float(value) if value is not None else None
 
     @property
     def longitude(self) -> float | None:
-        return (self.coordinator.data or {}).get("gps_lng")
+        value = self.data.get("gps_lng")
+        return float(value) if value is not None else None
 
     @property
     def location_accuracy(self) -> int:

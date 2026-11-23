@@ -1,28 +1,26 @@
 """
-Maveo IoT WebSocket client.
-
-Communicates with AWS IoT Core over MQTT-over-WebSocket using SigV4 auth.
+Maveo IoT client: MQTT 3.1.1 over WebSocket to AWS IoT Core, signed with SigV4.
 
 MQTT topic format (confirmed via live testing):
   {device_id}/cmd  — app → device (publish commands here)
   {device_id}/rsp  — device → app (subscribe here for responses)
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import hmac
 import json
-import ssl
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Self
 
-import websockets
-from websockets.asyncio.client import ClientConnection
-from websockets.typing import Subprotocol
+import aiohttp
 
 from .auth import AuthResult
 from .config import Config
+from .exceptions import CloudError
 
 # ---------------------------------------------------------------------------
 # Commands (from decompiled libmaveo-app)
@@ -107,7 +105,7 @@ DOOR_POSITION_NAMES = {
 
 
 # ---------------------------------------------------------------------------
-# SigV4 query-param signing for WebSocket
+# SigV4 header signing for the WebSocket handshake
 # ---------------------------------------------------------------------------
 
 
@@ -304,34 +302,33 @@ def _parse_mqtt_packet(data: bytes) -> dict[str, Any]:
 
 class MaveoIoTClient:
     """
-    MQTT over WebSocket client for Maveo device control.
+    MQTT over WebSocket client for one Maveo device.
 
-    MQTT topic format (confirmed via live PCAP + testing):
-      {device_id}/cmd  — publish commands here
-      {device_id}/rsp  — subscribe here for responses
-
-    Usage (async):
-        async with MaveoIoTClient(auth, config, device_id) as client:
+    Usage:
+        async with MaveoIoTClient(session, auth, config, device_id) as client:
+            await client.subscribe()
             await client.send(Command.STATUS)
             pkt = await client.receive()
 
     AWS IoT policy requires MQTT client_id == device_id.
-    WARNING: connecting kicks the stick's own MQTT session; it will reconnect
-    automatically (typically within a few seconds).
+    Connecting kicks the stick's own MQTT session; it reconnects by itself
+    within a few seconds.
     """
 
-    def __init__(self, auth: AuthResult, config: Config, device_id: str) -> None:
-        """device_id is the numeric device ID string from list_devices()."""
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        auth: AuthResult,
+        config: Config,
+        device_id: str,
+    ) -> None:
+        self._session = session
         self._auth = auth
         self._config = config
         self._device_id = device_id
-        self._ws: ClientConnection | None = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._cmd_topic = f"{device_id}/cmd"
         self._rsp_topic = f"{device_id}/rsp"
-
-    # ------------------------------------------------------------------
-    # Context manager
-    # ------------------------------------------------------------------
 
     async def __aenter__(self) -> Self:
         await self.connect()
@@ -340,12 +337,11 @@ class MaveoIoTClient:
     async def __aexit__(self, *_: object) -> None:
         await self.close()
 
-    # ------------------------------------------------------------------
-    # Connection lifecycle
-    # ------------------------------------------------------------------
-
     async def connect(self) -> None:
-        """Open the WebSocket and send MQTT CONNECT; wait for CONNACK."""
+        """Open the WebSocket and send MQTT CONNECT; wait for CONNACK.
+
+        Raises CloudError when the connection or MQTT handshake fails.
+        """
         headers = _sigv4_headers(
             hostname=self._config.iot_hostname,
             region=self._config.aws_region,
@@ -353,62 +349,54 @@ class MaveoIoTClient:
             secret_key=self._auth.secret_key,
             session_token=self._auth.session_token,
         )
-        # Create SSL context in executor to avoid blocking the event loop
-        # (load_default_certs / set_default_verify_paths do blocking I/O)
-        ssl_context = await asyncio.get_running_loop().run_in_executor(
-            None,
-            ssl.create_default_context,
-        )
-        self._ws = await websockets.connect(
-            f"wss://{self._config.iot_hostname}/mqtt",
-            subprotocols=[Subprotocol("mqtt")],
-            additional_headers=headers,
-            open_timeout=15,
-            ssl=ssl_context,
-        )
+        try:
+            async with asyncio.timeout(15):
+                self._ws = await self._session.ws_connect(
+                    self._config.iot_url, protocols=("mqtt",), headers=headers
+                )
+            await self._ws.send_bytes(_mqtt_connect_packet(self._device_id))
+            pkt = await self._recv_packet(timeout=10)
+        except (aiohttp.ClientError, TimeoutError, ConnectionError) as err:
+            await self.close()
+            raise CloudError(f"MQTT connect failed ({type(err).__name__})") from err
 
-        await self._ws.send(_mqtt_connect_packet(self._device_id))
-        pkt = await self._recv_packet(timeout=10)
-        if pkt.get("type") != "CONNACK":
-            raise ConnectionError(f"Expected CONNACK, got: {pkt}")
-        if pkt.get("return_code", 1) != 0:
-            raise ConnectionError(
-                f"MQTT connection refused, code: {pkt['return_code']}"
-            )
+        if pkt.get("type") != "CONNACK" or pkt.get("return_code", 1) != 0:
+            await self.close()
+            raise CloudError(f"MQTT connection refused: {pkt.get('type')}")
 
     async def subscribe(self, topic: str | None = None) -> dict[str, Any]:
-        """
-        Subscribe to a topic and return the SUBACK.
-        Defaults to {device_id}/rsp — the device response topic.
-        """
+        """Subscribe to a topic (default {device_id}/rsp) and return the SUBACK."""
         topic = topic or self._rsp_topic
-        await self._connection().send(_mqtt_subscribe_packet(topic, packet_id=1))
+        await self._connection().send_bytes(_mqtt_subscribe_packet(topic, 1))
         return await self._recv_packet(timeout=10)
 
     async def send(self, command: Mapping[str, Any]) -> None:
         """Publish a command to {device_id}/cmd."""
         payload = json.dumps(command).encode()
-        await self._connection().send(_mqtt_publish_packet(self._cmd_topic, payload))
+        await self._connection().send_bytes(
+            _mqtt_publish_packet(self._cmd_topic, payload)
+        )
 
     async def receive(self, timeout: float = 5.0) -> dict[str, Any] | None:
         """Wait for an MQTT packet. Returns None on timeout or close."""
         try:
             return await self._recv_packet(timeout)
-        except (TimeoutError, websockets.exceptions.ConnectionClosed):
+        except (TimeoutError, ConnectionError):
             return None
 
-    def _connection(self) -> ClientConnection:
+    def _connection(self) -> aiohttp.ClientWebSocketResponse:
         if self._ws is None:
             raise ConnectionError("Not connected")
         return self._ws
 
     async def _recv_packet(self, timeout: float) -> dict[str, Any]:
-        data = await asyncio.wait_for(self._connection().recv(), timeout=timeout)
-        if isinstance(data, str):
-            raise ConnectionError("Expected a binary MQTT frame")
+        msg = await self._connection().receive(timeout=timeout)
+        if msg.type is not aiohttp.WSMsgType.BINARY:
+            raise ConnectionError(f"Expected a binary MQTT frame, got {msg.type.name}")
+        data: bytes = msg.data
         return _parse_mqtt_packet(data)
 
     async def close(self) -> None:
-        if self._ws:
+        if self._ws is not None:
             await self._ws.close()
             self._ws = None
