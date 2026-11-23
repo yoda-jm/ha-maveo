@@ -100,3 +100,22 @@ def test_mqtt_subscribe_is_well_formed(topic: str) -> None:
     length, size = iot._decode_remaining_length(packet)
     assert packet[0] == 0x82
     assert len(packet) == 1 + size + length
+
+
+@given(data=st.binary(max_size=64))
+def test_mqtt_parser_accepts_any_bytes(data: bytes) -> None:
+    packet = iot._parse_mqtt_packet(data)
+    assert isinstance(packet["type"], str)
+    if "json" in packet:
+        assert isinstance(packet["json"], dict)
+
+
+@given(
+    topic=st.text(alphabet="0123456789/rsp", min_size=1, max_size=20),
+    payload=st.binary(max_size=64),
+)
+def test_mqtt_publish_with_any_payload_parses(topic: str, payload: bytes) -> None:
+    packet = iot._parse_mqtt_packet(iot._mqtt_publish_packet(topic, payload))
+    assert packet["topic"] == topic
+    if "json" in packet:
+        assert isinstance(packet["json"], dict)

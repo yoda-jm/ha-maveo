@@ -109,9 +109,7 @@ DOOR_POSITION_NAMES = {
 # ---------------------------------------------------------------------------
 
 
-def _hmac_sha256(key: bytes | str, data: str) -> bytes:
-    if isinstance(key, str):
-        key = key.encode()
+def _hmac_sha256(key: bytes, data: str) -> bytes:
     return hmac.new(key, data.encode(), hashlib.sha256).digest()
 
 
@@ -284,9 +282,11 @@ def _parse_mqtt_packet(data: bytes) -> dict[str, Any]:
             raw_payload = data[body_start:]
             result["payload"] = raw_payload.decode(errors="replace")
             try:
-                result["json"] = json.loads(raw_payload)
-            except json.JSONDecodeError:
-                pass
+                decoded = json.loads(raw_payload)
+            except ValueError:  # includes UnicodeDecodeError
+                decoded = None
+            if isinstance(decoded, dict):
+                result["json"] = decoded
 
     elif msg_type == 9 and len(data) >= hdr + 3:  # SUBACK
         result["packet_id"] = int.from_bytes(data[hdr : hdr + 2], "big")
