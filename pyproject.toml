@@ -1,6 +1,6 @@
 [project]
 name = "ha-maveo"
-version = "0.2.0"
+version = "1.0.0"
 requires-python = ">=3.13"
 
 [tool.ruff]
@@ -15,7 +15,7 @@ python_version = "3.13"
 packages = ["custom_components.maveo", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["Crypto.*", "websockets.*", "pytest_homeassistant_custom_component.*"]
+module = ["Crypto.*", "pytest_homeassistant_custom_component.*"]
 follow_untyped_imports = true
 
 [tool.pytest.ini_options]

@@ -14,4 +14,4 @@ jobs:
           python-version: "3.14"
       - run: pip install -r requirements_test.txt
       - run: mypy
-      - run: pytest -q
+      - run: pytest -q --cov=custom_components/maveo --cov-report=term-missing --cov-fail-under=95
