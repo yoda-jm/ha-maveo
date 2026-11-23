@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import timedelta
+from enum import Enum, auto
 from typing import Any
 
 import aiohttp
@@ -80,6 +81,14 @@ _EMPTY: dict[str, Any] = {
     "weather_temperature": None,
     "weather_humidity": None,
 }
+
+
+class Reachability(Enum):
+    """Whether a device answered its last poll; changes are logged once."""
+
+    UNKNOWN = auto()
+    ONLINE = auto()
+    OFFLINE = auto()
 
 
 async def _async_ensure_session(session: MaveoSession) -> None:
@@ -190,7 +199,7 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._session = session
         self.device_id = device_id
-        self._was_online: bool | None = None
+        self._reachability = Reachability.UNKNOWN
 
     async def _async_update_data(self) -> dict[str, Any]:
         await _async_ensure_session(self._session)
@@ -214,12 +223,13 @@ class MaveoDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         online = result.get("door_position") is not None
         result["online"] = online
-        if online != self._was_online:
+        reachability = Reachability.ONLINE if online else Reachability.OFFLINE
+        if reachability is not self._reachability:
             if online:
                 _LOGGER.info("Maveo device %s is online", self.device_id)
             else:
                 _LOGGER.warning("Maveo device %s does not respond", self.device_id)
-            self._was_online = online
+            self._reachability = reachability
         return result
 
     async def _fetch_mqtt_state(self) -> dict[str, Any]:

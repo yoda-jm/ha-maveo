@@ -165,7 +165,7 @@ async def async_setup_entry(
     @callback
     def _add(device: MaveoDevice) -> None:
         async_add_entities(MaveoDeviceSensor(device, desc) for desc in DEVICE_SENSORS)
-        _track_guests(hass, entry, device, async_add_entities)
+        _track_guests(hass, device, async_add_entities)
 
     entry.async_on_unload(entry.runtime_data.async_subscribe_devices(_add))
 
@@ -173,7 +173,6 @@ async def async_setup_entry(
 @callback
 def _track_guests(
     hass: HomeAssistant,
-    entry: MaveoConfigEntry,
     device: MaveoDevice,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
@@ -201,7 +200,7 @@ def _track_guests(
                 registry.async_remove(entity_id)
             tracked.discard(user_id)
 
-    entry.async_on_unload(coordinator.async_add_listener(_on_update))
+    device.async_on_remove(coordinator.async_add_listener(_on_update))
     _on_update()
 
 

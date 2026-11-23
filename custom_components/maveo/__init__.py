@@ -71,6 +71,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MaveoConfigEntry) -> boo
         hass.async_create_task(_async_sync_devices(hass, entry), eager_start=True)
 
     entry.async_on_unload(account.async_add_listener(_account_updated))
+    entry.async_on_unload(data.async_remove_all)
     return True
 
 
@@ -123,7 +124,7 @@ async def _async_sync_devices(hass: HomeAssistant, entry: MaveoConfigEntry) -> N
 
     registry = dr.async_get(hass)
     for device_id in data.devices.keys() - account_devices.keys():
-        data.devices.pop(device_id)
+        data.async_device_removed(device_id)
         device_entry = registry.async_get_device_by_identifier(
             (DOMAIN, device_id), entry.entry_id
         )

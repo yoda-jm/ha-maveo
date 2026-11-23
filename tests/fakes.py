@@ -144,10 +144,29 @@ STICK_REPLIES: dict[str, dict[str, Any]] = {
 }
 
 
+# H+T sensor readings and metadata, as sent in reply to Command.SENSOR_FULL.
+HT_SENSOR_REPLY: dict[str, Any] = {
+    "StoA_sensor": 0,
+    "temperature_val": 2150,
+    "humidity_val": 4520,
+    "battery_val": 87,
+    "last_update": 1700000000,
+    "name": "Hall",
+    "manufacturer": "Marantec",
+    "model": "HT-1",
+    "serial_num": "HT0001",
+    "firmware_rev": "1.0",
+    "software_rev": "",
+    "hardware_rev": "A",
+}
+
+
 class FakeStick:
     """Garage sticks reachable over MQTT-over-WebSocket.
 
-    `replies` maps a command key to the stick's answer. `reachable=False`
+    `replies` maps a command key to the stick's answer. `bluefi` sends a
+    state dump before the door status, as a BlueFi stick does. `ht_sensor`
+    answers the indoor sensor commands as a paired sensor. `reachable=False`
     makes the WebSocket handshake fail, as when AWS IoT is unreachable.
     """
 
@@ -157,6 +176,8 @@ class FakeStick:
         self.connect_headers: list[dict[str, str]] = []
         self.reachable = True
         self.connack_code = 0
+        self.bluefi = False
+        self.ht_sensor: dict[str, Any] | None = None
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         if not self.reachable:
@@ -182,10 +203,23 @@ class FakeStick:
             device_id = packet["topic"].split("/")[0]
             command: dict[str, Any] = packet["json"]
             self.commands.append(command)
-            for key, reply in self.replies.items():
-                if key in command:
-                    body = json.dumps(reply).encode()
-                    return [iot._mqtt_publish_packet(f"{device_id}/rsp", body)]
+            return [
+                iot._mqtt_publish_packet(f"{device_id}/rsp", json.dumps(r).encode())
+                for r in self._answer(command)
+            ]
+        return []
+
+    def _answer(self, command: dict[str, Any]) -> list[dict[str, Any]]:
+        if self.bluefi and "AtoS_s" in command and "AtoS_s" in self.replies:
+            return [{"StoA_l_r": 1}, {"StoA_buzzer_r": 0}, self.replies["AtoS_s"]]
+        if self.ht_sensor is not None and "AtoS_sensor" in command:
+            if command.get("command") == 0:
+                return [{"StoA_sensor": 0, "command": 0, "error": 0}]
+            if command.get("command") == 8:
+                return [self.ht_sensor, {"state": 9}]
+        for key, reply in self.replies.items():
+            if key in command:
+                return [reply]
         return []
 
 

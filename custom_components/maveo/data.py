@@ -19,11 +19,30 @@ from .session import MaveoSession
 
 @dataclass
 class MaveoDevice:
-    """One garage stick and the coordinators that poll it."""
+    """One garage stick and the coordinators that poll it.
+
+    A device is active until it leaves the account or the entry unloads;
+    removing it runs its teardown callbacks once.
+    """
 
     info: Device
     state: MaveoDeviceCoordinator
     guests: MaveoGuestCoordinator
+    _teardown: list[CALLBACK_TYPE] = field(default_factory=list)
+    removed: bool = False
+
+    @callback
+    def async_on_remove(self, func: CALLBACK_TYPE) -> None:
+        """Run `func` when the device is removed."""
+        self._teardown.append(func)
+
+    @callback
+    def async_remove(self) -> None:
+        if self.removed:
+            return
+        self.removed = True
+        while self._teardown:
+            self._teardown.pop()()
 
 
 @dataclass
@@ -53,6 +72,15 @@ class MaveoData:
         self.devices[device.info.id] = device
         for add in list(self._listeners):
             add(device)
+
+    @callback
+    def async_device_removed(self, device_id: str) -> None:
+        self.devices.pop(device_id).async_remove()
+
+    @callback
+    def async_remove_all(self) -> None:
+        for device in self.devices.values():
+            device.async_remove()
 
 
 type MaveoConfigEntry = ConfigEntry[MaveoData]
